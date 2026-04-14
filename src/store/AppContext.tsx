@@ -73,6 +73,10 @@ interface AppState {
   skills: SlimeSkill[];
   isExecutingTool: boolean;
   activeTools: string[];
+  inputHistory: string[];
+  inputHistoryIndex: number;
+  searchQuery: string;
+  searchResults: string[];
 }
 
 interface AppContextType extends AppState {
@@ -102,6 +106,24 @@ interface AppContextType extends AppState {
   setSkills: React.Dispatch<React.SetStateAction<SlimeSkill[]>>;
   activeSkill: SlimeSkill | null;
   updateSkillFeedback: (skillId: string, thumbsUp: boolean) => Promise<void>;
+  clearConversationMessages: (id: string) => void;
+  // New feature methods
+  regenerateLastResponse: () => Promise<void>;
+  editLastMessage: (newContent: string) => Promise<void>;
+  retryLastMessage: () => Promise<void>;
+  togglePinConversation: (id: string) => void;
+  duplicateConversation: (id: string) => void;
+  renameConversation: (id: string, newTitle: string) => void;
+  branchConversation: (messageId: string) => void;
+  addToInputHistory: (content: string) => void;
+  searchConversation: (query: string) => void;
+  copyMessageToClipboard: (content: string) => Promise<void>;
+  exportConversation: (id: string, format: 'markdown' | 'pdf') => Promise<void>;
+  addQuickPrompt: (name: string, content: string) => void;
+  removeQuickPrompt: (id: string) => void;
+  toggleFavoriteModel: (modelId: string) => void;
+  importData: (data: string) => Promise<void>;
+  exportAllData: () => Promise<string>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -281,13 +303,25 @@ export const handleToolExecution = async (name: string, args: any): Promise<any>
         return { success: true };
       }
       case 'web_search': {
-        await new Promise(r => setTimeout(r, 1000));
-        return { 
-          results: [
-            { title: 'Mock Result 1', snippet: `This is a mock search result for: ${args.query}`, url: 'https://example.com/1' },
-            { title: 'Mock Result 2', snippet: 'More mock details about the query.', url: 'https://example.com/2' }
-          ]
-        };
+        try {
+          const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query)}`);
+          const text = await response.text();
+          const domparser = new DOMParser();
+          const doc = domparser.parseFromString(text, 'text/html');
+          const results = Array.from(doc.querySelectorAll('.result')).slice(0, 3).map(el => {
+            const titleEl = el.querySelector('.result__title');
+            const snippetEl = el.querySelector('.result__snippet');
+            const urlEl = el.querySelector('.result__url');
+            return {
+              title: titleEl ? titleEl.textContent?.trim() : '',
+              snippet: snippetEl ? snippetEl.textContent?.trim() : '',
+              url: urlEl ? urlEl.getAttribute('href')?.trim() : ''
+            };
+          });
+          return { results: results.length > 0 ? results : [{ error: 'No results found' }] };
+        } catch (e) {
+          return { error: 'Failed to search the web' };
+        }
       }
       default:
         return { error: `Unknown tool: ${name}` };
@@ -338,6 +372,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [activeTools, setActiveTools] = useState<string[]>([]);
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [inputHistoryIndex, setInputHistoryIndex] = useState(-1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<string[]>([]);
 
   const [vault, setVault] = useState<VaultState>({
     vaultConnected: false,
@@ -772,7 +810,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : undefined;
 
       const userMessageContent = content;
-      let assistantResponseContent = '';
+      // let assistantResponseContent = '';
 
       const userMessage: ChatMessage = {
         id: generateId(),
@@ -824,13 +862,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ? activeSkillNow.systemPrompt
         : settings.systemPrompt;
 
-      effectiveSystemPrompt += `\n\nYou have access to the following tools:\n${JSON.stringify(AVAILABLE_TOOLS, null, 2)}\nTo use tools, output a markdown JSON block containing an array of tool call objects: \`\`\`json\n[{"name": "...", "arguments": {...}}]\n\`\`\``;
+      effectiveSystemPrompt += `\n\nYou have access to the following tools:\n${JSON.stringify(AVAILABLE_TOOLS, null, 2)}\nTo use tools, output a markdown JSON block containing an array of tool call objects: \`\`\`json\n[{"name": "...", "arguments": {...}}]\n\`\`\`\nOnce you receive tool results, DO NOT call the tool again with the same arguments. Summarize the findings to the user.`;
 
-      const runCompletionLoop = async (currentMessages: ChatMessage[]) => {
-        if (abortRef.current) return;
+      const runCompletionLoop = async (currentMessages: ChatMessage[], loopCount = 0) => {
+        if (abortRef.current || loopCount > 5) {
+          setIsLoading(false);
+          return;
+        }
         setIsLoading(true);
 
         const loopAssistantMessageId = generateId();
+        const requestStartTime = Date.now();
         const loopAssistantMessage: ChatMessage = {
           id: loopAssistantMessageId,
           role: 'assistant',
@@ -878,14 +920,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   )
                 );
               },
-              onComplete: async () => {
+              onComplete: async (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => {
+                const responseTime = Date.now() - requestStartTime;
                 setConversations((prev) =>
                   prev.map((c) =>
                     c.id === activeConversationId
                       ? {
                           ...c,
                           messages: c.messages.map((m) =>
-                            m.id === loopAssistantMessageId ? { ...m, isStreaming: false } : m
+                            m.id === loopAssistantMessageId ? { ...m, isStreaming: false, responseTime, usage } : m
                           ),
                         }
                       : c
@@ -939,7 +982,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   } : c));
 
                   const nextContext = [...currentMessages, { ...loopAssistantMessage, content: assistantResponseContent, isStreaming: false, toolCalls: parsedToolCalls }, ...results];
-                  await runCompletionLoop(nextContext);
+                  await runCompletionLoop(nextContext, loopCount + 1);
                 } else {
                   setIsLoading(false);
                   if (settings.activeSkillId && userMessageContent && assistantResponseContent) {
@@ -999,6 +1042,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('mm_conversations');
   }, []);
 
+  const clearConversationMessages = useCallback((id: string) => {
+    setConversations(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      return { ...c, messages: [], updatedAt: Date.now() };
+    }));
+  }, []);
+
   const updateSkillFeedback = useCallback(async (skillId: string, thumbsUp: boolean) => {
     try {
       await updateSkillFeedbackDB(skillId, thumbsUp);
@@ -1019,6 +1069,363 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSkills(loadedSkills);
     }).catch(console.error);
   }, []);
+
+  // ============ NEW FEATURE FUNCTIONS ============
+
+  const addToInputHistory = useCallback((content: string) => {
+    if (!content.trim()) return;
+    setInputHistory(prev => {
+      const filtered = prev.filter(item => item !== content);
+      return [content, ...filtered].slice(0, 50);
+    });
+    setInputHistoryIndex(-1);
+  }, []);
+
+  const regenerateLastResponse = useCallback(async () => {
+    const currentConversation = conversations.find(c => c.id === activeConversationId);
+    if (!currentConversation || !activeModel) return;
+    
+    // Find the last user message that has an assistant response
+    const messages = currentConversation.messages;
+    let lastUserIndex = -1;
+    let lastAssistantIndex = -1;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user' && lastUserIndex === -1) {
+        lastUserIndex = i;
+      }
+      if (messages[i].role === 'assistant' && lastUserIndex !== -1 && lastAssistantIndex === -1) {
+        lastAssistantIndex = i;
+        break;
+      }
+    }
+    
+    if (lastUserIndex === -1 || lastAssistantIndex === -1) return;
+    
+    const userMessage = messages[lastUserIndex];
+    const userContent = userMessage.content;
+    
+    // Remove the user message and all messages after it
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConversationId) return c;
+      return {
+        ...c,
+        messages: c.messages.slice(0, lastUserIndex),
+      };
+    }));
+    
+    // Resend the message
+    await sendMessage(userContent, userMessage.attachments);
+  }, [activeModel, activeConversationId, sendMessage]);
+
+  const editLastMessage = useCallback(async (newContent: string) => {
+    const currentConversation = conversations.find(c => c.id === activeConversationId);
+    if (!currentConversation || !activeModel) return;
+    
+    const messages = currentConversation.messages;
+    let lastUserIndex = -1;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        lastUserIndex = i;
+        break;
+      }
+    }
+    
+    if (lastUserIndex === -1) return;
+    
+    // Update the message content
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConversationId) return c;
+      const updatedMessages = [...c.messages];
+      updatedMessages[lastUserIndex] = {
+        ...updatedMessages[lastUserIndex],
+        content: newContent,
+        timestamp: Date.now(),
+      };
+      return { ...c, messages: updatedMessages };
+    }));
+    
+    // Find and remove subsequent assistant messages
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConversationId) return c;
+      return { ...c, messages: c.messages.slice(0, lastUserIndex + 1) };
+    }));
+    
+    // Resend with new content
+    await sendMessage(newContent, messages[lastUserIndex].attachments);
+  }, [activeModel, activeConversationId, sendMessage]);
+
+  const retryLastMessage = useCallback(async () => {
+    const currentConversation = conversations.find(c => c.id === activeConversationId);
+    if (!currentConversation) return;
+    
+    const messages = currentConversation.messages;
+    let lastErrorIndex = -1;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && messages[i].error) {
+        lastErrorIndex = i;
+        break;
+      }
+    }
+    
+    if (lastErrorIndex === -1) return;
+    
+    // Find the corresponding user message
+    let userIndex = -1;
+    for (let i = lastErrorIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userIndex = i;
+        break;
+      }
+    }
+    
+    if (userIndex === -1) return;
+    
+    const userMessage = messages[userIndex];
+    
+    // Remove the error message
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConversationId) return c;
+      return { ...c, messages: c.messages.slice(0, lastErrorIndex) };
+    }));
+    
+    // Resend the message
+    await sendMessage(userMessage.content, userMessage.attachments);
+  }, [activeConversationId, sendMessage]);
+
+  const togglePinConversation = useCallback((id: string) => {
+    setConversations(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      return { ...c, isPinned: !c.isPinned };
+    }));
+  }, []);
+
+  const duplicateConversation = useCallback((id: string) => {
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    
+    const newId = generateId();
+    const newConv: Conversation = {
+      ...conv,
+      id: newId,
+      title: `${conv.title} (copy)`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isPinned: false,
+    };
+    
+    setConversations(prev => [newConv, ...prev]);
+    setActiveConversationId(newId);
+  }, [conversations]);
+
+  const renameConversation = useCallback((id: string, newTitle: string) => {
+    setConversations(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      return { ...c, title: newTitle, updatedAt: Date.now() };
+    }));
+  }, []);
+
+  const branchConversation = useCallback((messageId: string) => {
+    const conv = activeConversation;
+    if (!conv) return;
+    
+    const messageIndex = conv.messages.findIndex(m => m.id === messageId);
+    if (messageIndex === -1) return;
+    
+    const newId = generateId();
+    const branchMessages = conv.messages.slice(0, messageIndex + 1);
+    
+    const newConv: Conversation = {
+      id: newId,
+      title: `${conv.title} (branch)`,
+      messages: branchMessages,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      modelId: conv.modelId,
+      provider: conv.provider,
+    };
+    
+    setConversations(prev => [newConv, ...prev]);
+    setActiveConversationId(newId);
+  }, [activeConversationId, conversations]);
+
+  const searchConversation = useCallback((query: string) => {
+    const currentConversation = conversations.find(c => c.id === activeConversationId);
+    setSearchQuery(query);
+    if (!currentConversation || !query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    
+    const results = currentConversation.messages
+      .filter(m => m.content.toLowerCase().includes(query.toLowerCase()))
+      .map(m => m.id);
+    
+    setSearchResults(results);
+  }, [activeConversationId, conversations]);
+
+  const copyMessageToClipboard = useCallback(async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, []);
+
+  const exportConversation = useCallback(async (id: string, format: 'markdown' | 'pdf') => {
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    
+    let content = '';
+    
+    if (format === 'markdown') {
+      content = `# ${conv.title}\n\n`;
+      content += `Created: ${new Date(conv.createdAt).toLocaleString()}\n\n`;
+      
+      for (const msg of conv.messages) {
+        const role = msg.role === 'user' ? '**You**' : '**Assistant**';
+        content += `${role}:\n${msg.content}\n\n---\n\n`;
+      }
+      
+      // Download as markdown
+      const blob = new Blob([content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${conv.title.replace(/[^a-z0-9]/gi, '_')}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      // PDF export (simplified - just use browser print)
+      content = `# ${conv.title}\n\n`;
+      for (const msg of conv.messages) {
+        const role = msg.role === 'user' ? 'You' : 'Assistant';
+        content += `${role}: ${msg.content}\n\n`;
+      }
+      
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(`<html><head><title>${conv.title}</title></head><body><pre>${content}</pre></body></html>`);
+        printWindow.document.close();
+        printWindow.print();
+      }
+    }
+  }, [conversations]);
+
+  const addQuickPrompt = useCallback((name: string, content: string) => {
+    const newPrompt = {
+      id: generateId(),
+      name,
+      content,
+      createdAt: Date.now(),
+    };
+    setSettings(prev => ({
+      ...prev,
+      quickPrompts: [...prev.quickPrompts, newPrompt],
+    }));
+  }, []);
+
+  const removeQuickPrompt = useCallback((id: string) => {
+    setSettings(prev => ({
+      ...prev,
+      quickPrompts: prev.quickPrompts.filter(p => p.id !== id),
+    }));
+  }, []);
+
+  const toggleFavoriteModel = useCallback((modelId: string) => {
+    setSettings(prev => {
+      const isFavorite = prev.favoriteModels.includes(modelId);
+      return {
+        ...prev,
+        favoriteModels: isFavorite
+          ? prev.favoriteModels.filter(id => id !== modelId)
+          : [...prev.favoriteModels, modelId],
+      };
+    });
+    
+    // Also update recent models
+    if (activeModel) {
+      setSettings(prev => {
+        const filtered = prev.recentModels.filter(id => id !== activeModel.id);
+        return {
+          ...prev,
+          recentModels: [activeModel.id, ...filtered].slice(0, 10),
+        };
+      });
+    }
+  }, [activeModel]);
+
+  const importData = useCallback(async (data: string) => {
+    try {
+      const imported = JSON.parse(data);
+      
+      if (imported.conversations) {
+        setConversations(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newConvs = imported.conversations.filter((c: Conversation) => !existingIds.has(c.id));
+          return [...newConvs, ...prev];
+        });
+      }
+      
+      if (imported.settings) {
+        setSettings(prev => ({ ...prev, ...imported.settings }));
+      }
+      
+      if (imported.skills) {
+        setSkills(prev => [...prev, ...imported.skills]);
+      }
+    } catch (err) {
+      setError('Failed to import data');
+      console.error(err);
+    }
+  }, [setError]);
+
+  const exportAllData = useCallback(async (): Promise<string> => {
+    const data = {
+      conversations: conversations.map(c => ({
+        ...c,
+        messages: c.messages.map(m => ({
+          ...m,
+          isStreaming: false,
+        })),
+      })),
+      settings: {
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+        systemPrompt: settings.systemPrompt,
+        streamResponses: settings.streamResponses,
+        sidebarCollapsed: settings.sidebarCollapsed,
+        activeSkillId: settings.activeSkillId,
+        recentModels: settings.recentModels,
+        favoriteModels: settings.favoriteModels,
+        quickPrompts: settings.quickPrompts,
+        autoRetry: settings.autoRetry,
+        maxRetries: settings.maxRetries,
+        showTimestamps: settings.showTimestamps,
+        showTokenCount: settings.showTokenCount,
+        showCostEstimate: settings.showCostEstimate,
+      },
+      skills: skills,
+      exportedAt: Date.now(),
+    };
+    
+    return JSON.stringify(data, null, 2);
+  }, [conversations, settings, skills]);
+
+  // Update active model to track in recent
+  useEffect(() => {
+    if (activeModel) {
+      setSettings(prev => {
+        const filtered = prev.recentModels.filter(id => id !== activeModel.id);
+        return {
+          ...prev,
+          recentModels: [activeModel.id, ...filtered].slice(0, 10),
+        };
+      });
+    }
+  }, [activeModel?.id]);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) || null;
   const activeSkill = settings.activeSkillId
@@ -1042,6 +1449,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         userMemory,
         isExecutingTool,
         activeTools,
+        inputHistory,
+        inputHistoryIndex,
+        setInputHistoryIndex,
+        searchQuery,
+        searchResults,
         setProviders,
         setActiveModel,
         setSettings,
@@ -1057,6 +1469,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setError,
         activeConversation,
         clearAllConversations,
+        clearConversationMessages,
         connectVault,
         disconnectVault,
         syncConversations,
@@ -1065,10 +1478,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveApiKeyToVault,
         refreshVaultState,
         hasFileSystemAccess,
-        skills, // Kept this one
+        skills,
         setSkills,
         activeSkill,
         updateSkillFeedback,
+        // New feature methods
+        regenerateLastResponse,
+        editLastMessage,
+        retryLastMessage,
+        togglePinConversation,
+        duplicateConversation,
+        renameConversation,
+        branchConversation,
+        addToInputHistory,
+        searchConversation,
+        copyMessageToClipboard,
+        exportConversation,
+        addQuickPrompt,
+        removeQuickPrompt,
+        toggleFavoriteModel,
+        importData,
+        exportAllData,
       }}
     >
       {children}

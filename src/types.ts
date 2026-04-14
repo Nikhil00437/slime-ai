@@ -60,6 +60,14 @@ export interface ChatMessage {
   }>;
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  responseTime?: number;
+  error?: string;
+  isRetrying?: boolean;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 }
 
 export interface Conversation {
@@ -70,6 +78,22 @@ export interface Conversation {
   updatedAt: number;
   modelId: string;
   provider: ProviderType;
+  isPinned?: boolean;
+  lastModelId?: string;
+  favoriteModels?: string[];
+}
+
+export interface InputHistoryItem {
+  id: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface QuickPrompt {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
 }
 
 export interface AppSettings {
@@ -79,6 +103,14 @@ export interface AppSettings {
   streamResponses: boolean;
   sidebarCollapsed: boolean;
   activeSkillId: string | null;
+  recentModels: string[];
+  favoriteModels: string[];
+  quickPrompts: QuickPrompt[];
+  autoRetry: boolean;
+  maxRetries: number;
+  showTimestamps: boolean;
+  showTokenCount: boolean;
+  showCostEstimate: boolean;
 }
 
 export interface Skill {
@@ -157,6 +189,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   streamResponses: true,
   sidebarCollapsed: false,
   activeSkillId: null,
+  recentModels: [],
+  favoriteModels: [],
+  quickPrompts: [],
+  autoRetry: true,
+  maxRetries: 3,
+  showTimestamps: true,
+  showTokenCount: false,
+  showCostEstimate: true,
 };
 
 export const DEFAULT_PROVIDERS: Provider[] = [

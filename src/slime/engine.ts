@@ -110,7 +110,7 @@ export async function generateSkill(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
-        ...(provider === 'openrouter' ? { 'HTTP-Referer': 'localhost', 'X-Title': 'MultiModel' } : {}),
+        ...(provider === 'openrouter' ? { 'HTTP-Referer': 'localhost', 'X-Title': 'Slime AI' } : {}),
       },
       body: JSON.stringify({
         model: modelId,

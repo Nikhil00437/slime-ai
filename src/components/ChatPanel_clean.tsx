@@ -3,7 +3,6 @@ import { useAppContext } from '../store/AppContext';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AttachmentInput, Attachment, getCapabilityFilters, filterModelsByCapabilities } from './AttachmentInput';
 import { isModelCompatibleWithSkill, filterModelsBySkill, getIncompatibleModels } from '../api/modelSkillCompatibility';
-import { calculateMessageCost, formatCost, formatTokenCount } from '../api/pricing';
 import {
   Send,
   Square,
@@ -74,14 +73,11 @@ export const ChatPanel: React.FC = () => {
     copyMessageToClipboard,
     searchConversation,
     inputHistory,
-    inputHistoryIndex,
-    setInputHistoryIndex,
     addToInputHistory,
     activeConversationId,
     conversations,
     setActiveConversation,
     deleteConversation,
-    clearConversationMessages,
     togglePinConversation,
     duplicateConversation,
     renameConversation,
@@ -104,54 +100,47 @@ export const ChatPanel: React.FC = () => {
   const [titleInput, setTitleInput] = useState('');
   const [showQuickPrompts, setShowQuickPrompts] = useState(false);
   const [showNewMessages, setShowNewMessages] = useState(false);
-  const [showTemperature, setShowTemperature] = useState(false);
-  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
-  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevMessagesLength = useRef(0);
-  const draftTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load draft on mount and conversation change
   useEffect(() => {
-    if (!activeConversationId) return;
-    const savedDraft = localStorage.getItem(`mm_draft_${activeConversationId}`);
-    if (savedDraft) {
-      setInput(savedDraft);
-    }
-  }, [activeConversationId]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    prevMessagesLength.current = activeConversation?.messages.length || 0;
+  }, [activeConversation?.messages.length, activeConversation?.messages]);
 
-  // Save draft on input change (debounced)
+  // Auto-scroll detection
   useEffect(() => {
-    if (!activeConversationId || !input) return;
+    const container = messagesContainerRef.current;
+    if (!container) return;
     
-    if (draftTimeoutRef.current) {
-      clearTimeout(draftTimeoutRef.current);
-    }
-    
-    draftTimeoutRef.current = setTimeout(() => {
-      localStorage.setItem(`mm_draft_${activeConversationId}`, input);
-    }, 500);
-    
-    return () => {
-      if (draftTimeoutRef.current) {
-        clearTimeout(draftTimeoutRef.current);
-      }
+    const handleScroll = () => {
+      const atBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+      setIsAtBottom(atBottom);
+      setShowNewMessages(!atBottom && !isLoading);
     };
-  }, [input, activeConversationId]);
+    
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [isLoading]);
+
+  // Scroll to bottom on new messages when at bottom
+  useEffect(() => {
+    if (isAtBottom && activeConversation?.messages.length !== prevMessagesLength.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [activeConversation?.messages.length, isAtBottom]);
+
+  // Search functionality
+  useEffect(() => {
+    if (searchInput.trim()) {
+      searchConversation(searchInput);
+    }
+  }, [searchInput]);
 
   const handleSubmit = async () => {
     const trimmed = input.trim();
-    if (!trimmed && attachments.length === 0 || isLoading || !activeModel) return;
-    
-    // Clear draft on send
-    if (activeConversationId) {
-      localStorage.removeItem(`mm_draft_${activeConversationId}`);
-    }
-    
-    // Add to input history
     if (!trimmed && attachments.length === 0 || isLoading || !activeModel) return;
     
     // Auto-create conversation if none exists
@@ -163,7 +152,6 @@ export const ChatPanel: React.FC = () => {
     addToInputHistory(trimmed);
     
     setInput('');
-    setInputHistoryIndex(0); // Reset index on new message
     const currentAttachments = [...attachments];
     setAttachments([]);
     await sendMessage(trimmed, currentAttachments);
@@ -173,7 +161,8 @@ export const ChatPanel: React.FC = () => {
     // Arrow up - cycle through input history
     if (e.key === 'ArrowUp' && inputHistory.length > 0 && !showModelDropdown) {
       e.preventDefault();
-      const newIndex = inputHistoryIndex < inputHistory.length - 1 ? inputHistoryIndex + 1 : inputHistoryIndex;
+      const currentIndex = inputHistoryIndex;
+      const newIndex = currentIndex < inputHistory.length - 1 ? currentIndex + 1 : currentIndex;
       setInputHistoryIndex(newIndex);
       setInput(inputHistory[newIndex] || '');
       return;
@@ -307,39 +296,6 @@ export const ChatPanel: React.FC = () => {
                 onClick={() => setShowModelDropdown(false)}
               />
               <div className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50">
-                {/* Recent Models Section */}
-                {settings.recentModels.length > 0 && (
-                  <div className="border-b border-gray-800">
-                    <div className="px-3 py-2 flex items-center gap-2">
-                      <Clock size={12} className="text-blue-400" />
-                      <span className="text-xs font-semibold text-blue-400">Recent</span>
-                    </div>
-                    {settings.recentModels.slice(0, 5).map(recentModelId => {
-                      const model = allModels.find(m => m.id === recentModelId);
-                      if (!model) return null;
-                      const compat = activeSkill ? isModelCompatibleWithSkill(model, activeSkill) : { compatible: true, reason: '' };
-                      return (
-                        <button
-                          key={model.id}
-                          onClick={() => {
-                            setActiveModel(model);
-                            setShowModelDropdown(false);
-                          }}
-                          className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
-                            activeModel?.id === model.id
-                              ? 'bg-blue-600/20 text-blue-400'
-                              : compat.compatible
-                                ? 'text-gray-300 hover:bg-gray-800'
-                                : 'text-red-400/70 hover:bg-red-900/20'
-                          }`}
-                        >
-                          {model.name}
-                          {!compat.compatible && <AlertTriangle size={12} className="shrink-0" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
                 {hasCapFilter && (
                   <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
                     <span className="text-xs text-blue-400 font-medium">
@@ -432,72 +388,6 @@ export const ChatPanel: React.FC = () => {
             </span>
           </div>
         )}
-
-        {/* Temperature Slider */}
-        <div className="relative">
-          <button
-            onClick={() => setShowTemperature(!showTemperature)}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title={`Temperature: ${settings.temperature}`}
-          >
-            <span className="text-xs font-mono">{settings.temperature.toFixed(1)}</span>
-          </button>
-          {showTemperature && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowTemperature(false)} />
-              <div className="absolute top-full right-0 mt-1 p-3 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 min-w-48">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-400">Temperature</span>
-                  <span className="text-xs text-white font-mono">{settings.temperature.toFixed(1)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={settings.temperature}
-                  onChange={(e) => setSettings(s => ({ ...s, temperature: parseFloat(e.target.value) }))}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                />
-                <div className="flex justify-between mt-1">
-                  <span className="text-[10px] text-gray-600">Precise</span>
-                  <span className="text-[10px] text-gray-600">Balanced</span>
-                  <span className="text-[10px] text-gray-600">Creative</span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* System Prompt Preview */}
-        <div className="relative">
-          <button
-            onClick={() => setShowSystemPrompt(!showSystemPrompt)}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title="View system prompt"
-          >
-            <Sparkles size={14} />
-          </button>
-          {showSystemPrompt && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowSystemPrompt(false)} />
-              <div className="absolute top-full right-0 mt-1 p-3 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 max-w-64">
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles size={12} className="text-purple-400" />
-                  <span className="text-xs font-semibold text-gray-300">System Prompt</span>
-                </div>
-                <p className="text-xs text-gray-400 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                  {activeSkill ? activeSkill.systemPrompt : settings.systemPrompt}
-                </p>
-                {activeSkill && (
-                  <div className="mt-2 pt-2 border-t border-gray-700">
-                    <span className="text-xs text-purple-400">Active Skill: {activeSkill.name}</span>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
       </div>
 
       {/* Incompatible Model Warning */}
@@ -601,15 +491,6 @@ export const ChatPanel: React.FC = () => {
               <Clock size={14} />
             </button>
             
-            {/* Token count toggle */}
-            <button
-              onClick={() => setSettings(s => ({ ...s, showCostEstimate: !s.showCostEstimate }))}
-              className={`p-1.5 rounded transition-colors ${settings.showCostEstimate ? 'text-green-400 bg-green-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-              title={settings.showCostEstimate ? 'Hide cost/token info' : 'Show cost and token count'}
-            >
-              <span className="text-xs font-mono">$</span>
-            </button>
-            
             {/* Conversation menu */}
             <div className="relative">
               <button
@@ -667,15 +548,6 @@ export const ChatPanel: React.FC = () => {
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
                     >
                       <Download size={14} /> Export PDF
-                    </button>
-                    <button
-                      onClick={() => {
-                        clearConversationMessages(activeConversation.id);
-                        setShowConvMenu(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-yellow-400 hover:bg-yellow-900/20"
-                    >
-                      <Trash2 size={14} /> Clear Messages
                     </button>
                     <button
                       onClick={() => {
@@ -771,186 +643,188 @@ export const ChatPanel: React.FC = () => {
                       : ''
                   } ${isHighlighted ? 'bg-yellow-900/20' : ''}`}
                 >
-                  {/* Avatar */}
-                  <div className="shrink-0 mt-0.5">
-                    {message.role === 'user' ? (
-                      <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                        <User size={16} className="text-white" />
-                      </div>
-                    ) : message.role === 'tool' ? (
-                      <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
-                        <Bot size={16} className="text-gray-400" />
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
-                        <Sparkles size={16} className="text-white" />
-                      </div>
-                    )}
-                  </div>
+                {/* Avatar */}
+                <div className="shrink-0 mt-0.5">
+                  {message.role === 'user' ? (
+                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                      <User size={16} className="text-white" />
+                    </div>
+                  ) : message.role === 'tool' ? (
+                    <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
+                      <Bot size={16} className="text-gray-400" />
+                    </div>
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                      <Sparkles size={16} className="text-white" />
+                    </div>
+                  )}
+                </div>
 
-                  {/* Message Content */}
-                  <div className="flex-1 min-w-0">
-                    {message.role === 'tool' ? (
-                      <details className="w-full bg-black/20 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
-                        <summary className="px-4 py-2 text-xs text-gray-400 select-none group-hover:text-gray-300 focus:outline-none">
-                          Observed Tool Output (ID: {message.toolCallId?.slice(0, 8) || 'N/A'})
-                        </summary>
-                        <div className="px-4 py-3 border-t border-white/5 text-xs text-gray-500 font-mono whitespace-pre-wrap mt-0 bg-black/40 max-h-96 overflow-y-auto">
-                          {message.content}
-                        </div>
-                      </details>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="text-sm font-semibold text-white">
-                            {message.role === 'user' ? 'You' : 'Assistant'}
+                {/* Message Content */}
+                <div className="flex-1 min-w-0">
+                  {message.role === 'tool' ? (
+                    <details className="w-full bg-black/20 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
+                      <summary className="px-4 py-2 text-xs text-gray-400 select-none group-hover:text-gray-300 focus:outline-none">
+                        Observed Tool Output (ID: {message.toolCallId?.slice(0, 8) || 'N/A'})
+                      </summary>
+                      <div className="px-4 py-3 border-t border-white/5 text-xs text-gray-500 font-mono whitespace-pre-wrap mt-0 bg-black/40 max-h-96 overflow-y-auto">
+                        {message.content}
+                      </div>
+                    </details>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-sm font-semibold text-white">
+                          {message.role === 'user' ? 'You' : 'Assistant'}
+                        </span>
+                        {message.role === 'assistant' && (
+                          <span className="text-xs text-gray-500 font-mono">
+                            {message.model.length > 30
+                              ? message.model.slice(0, 30) + '...'
+                              : message.model}
                           </span>
+                        )}
+                        {/* Timestamp */}
+                        {settings.showTimestamps && (
+                          <span className="text-xs text-gray-600">
+                            {new Date(message.timestamp).toLocaleTimeString()}
+                          </span>
+                        )}
+                        {/* Response time */}
+                        {message.responseTime && message.role === 'assistant' && (
+                          <span className="text-xs text-gray-600">
+                            ({Math.round(message.responseTime / 1000)}s)
+                          </span>
+                        )}
+                        {message.isStreaming && (
+                          <span className="flex items-center gap-1 text-xs text-blue-400">
+                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                            typing...
+                          </span>
+                        )}
+                        {/* Error indicator with retry */}
+                        {message.error && (
+                          <span className="flex items-center gap-1 text-xs text-red-400">
+                            <AlertTriangle size={12} />
+                            Error
+                            <button
+                              onClick={retryLastMessage}
+                              className="ml-1 text-blue-400 hover:text-blue-300"
+                              title="Retry"
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                          </span>
+                        )}
+                        
+                        {/* Message action buttons - show on hover */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                          {/* Copy button for assistant messages */}
                           {message.role === 'assistant' && (
-                            <span className="text-xs text-gray-500 font-mono">
-                              {message.model.length > 30
-                                ? message.model.slice(0, 30) + '...'
-                                : message.model}
-                            </span>
+                            <button
+                              onClick={() => copyMessageToClipboard(message.content)}
+                              className="p-1 text-gray-500 hover:text-white transition-colors"
+                              title="Copy response"
+                            >
+                              {copiedMessageId === message.id ? (
+                                <Check size={12} className="text-green-400" />
+                              ) : (
+                                <Copy size={12} />
+                              )}
+                            </button>
                           )}
-                          {settings.showTimestamps && (
-                            <span className="text-xs text-gray-600">
-                              {new Date(message.timestamp).toLocaleTimeString()}
-                            </span>
+                          {/* Edit button for user messages */}
+                          {message.role === 'user' && isLastUserMessage && (
+                            <button
+                              onClick={() => {
+                                setEditingMessageId(message.id);
+                                setEditContent(message.content);
+                              }}
+                              className="p-1 text-gray-500 hover:text-white transition-colors"
+                              title="Edit and resend"
+                            >
+                              <Edit3 size={12} />
+                            </button>
                           )}
-                          {message.responseTime && message.role === 'assistant' && (
-                            <span className="text-xs text-gray-600">
-                              ({Math.round(message.responseTime / 1000)}s)
-                            </span>
+                          {/* Branch button */}
+                          {message.role === 'user' && (
+                            <button
+                              onClick={() => branchConversation(message.id)}
+                              className="p-1 text-gray-500 hover:text-white transition-colors"
+                              title="Continue from here as new chat"
+                            >
+                              <GitBranch size={12} />
+                            </button>
                           )}
-                          {/* Token count and cost */}
-                          {message.usage && message.role === 'assistant' && settings.showCostEstimate && (
-                            <span className="text-xs text-gray-600">
-                              {formatTokenCount(message.usage.totalTokens)} tokens • {formatCost(calculateMessageCost(message.provider, message.model, message.usage))}
-                            </span>
-                          )}
-                          {message.isStreaming && (
-                            <span className="flex items-center gap-1 text-xs text-blue-400">
-                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                              typing...
-                            </span>
-                          )}
-                          {message.error && (
-                            <span className="flex items-center gap-1 text-xs text-red-400">
-                              <AlertTriangle size={12} />
-                              Error
-                              <button
-                                onClick={retryLastMessage}
-                                className="ml-1 text-blue-400 hover:text-blue-300"
-                                title="Retry"
-                              >
-                                <RotateCcw size={12} />
-                              </button>
-                            </span>
-                          )}
- 
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
-                            {message.role === 'assistant' && (
-                              <button
-                                onClick={() => copyMessageToClipboard(message.content)}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
-                                title="Copy response"
-                              >
-                                {copiedMessageId === message.id ? (
-                                  <Check size={12} className="text-green-400" />
-                                ) : (
-                                  <Copy size={12} />
-                                )}
-                              </button>
-                            )}
-                            {message.role === 'user' && isLastUserMessage && (
-                              <button
-                                onClick={() => {
-                                  setEditingMessageId(message.id);
-                                  setEditContent(message.content);
-                                }}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
-                                title="Edit and resend"
-                              >
-                                <Edit3 size={12} />
-                              </button>
-                            )}
-                            {message.role === 'user' && (
-                              <button
-                                onClick={() => branchConversation(message.id)}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
-                                title="Continue from here as new chat"
-                              >
-                                <GitBranch size={12} />
-                              </button>
-                            )}
+                        </div>
+                      </div>
+                      
+                      {/* Edit mode for user messages */}
+                      {editingMessageId === message.id ? (
+                        <div className="mt-2">
+                          <textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm resize-none focus:outline-none focus:border-blue-500"
+                            rows={3}
+                            autoFocus
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={async () => {
+                                await editLastMessage(editContent);
+                                setEditingMessageId(null);
+                              }}
+                              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
+                            >
+                              Resend
+                            </button>
+                            <button
+                              onClick={() => setEditingMessageId(null)}
+                              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg"
+                            >
+                              Cancel
+                            </button>
                           </div>
                         </div>
- 
-                        {editingMessageId === message.id ? (
-                          <div className="mt-2">
-                            <textarea
-                              value={editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm resize-none focus:outline-none focus:border-blue-500"
-                              rows={3}
-                              autoFocus
-                            />
-                            <div className="flex gap-2 mt-2">
-                              <button
-                                onClick={async () => {
-                                  await editLastMessage(editContent);
-                                  setEditingMessageId(null);
-                                }}
-                                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
-                              >
-                                Resend
-                              </button>
-                              <button
-                                onClick={() => setEditingMessageId(null)}
-                                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-gray-200">
-                            {message.role === 'user' ? (
-                              <div className="space-y-2">
-                                {message.attachments && message.attachments.length > 0 && (
-                                  <div className="flex flex-wrap gap-2">
-                                    {message.attachments.map((att, idx) => (
-                                      att.type === 'image' ? (
-                                        <img
-                                          key={idx}
-                                          src={att.url}
-                                          alt={att.name}
-                                          className="max-w-xs max-h-48 rounded-lg border border-gray-700"
-                                        />
-                                      ) : (
-                                        <div key={idx} className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg">
-                                          <FileText size={16} className="text-gray-400" />
-                                          <span className="text-sm text-gray-300">{att.name}</span>
-                                        </div>
-                                      )
-                                    ))}
-                                  </div>
-                                )}
-                                <div className="whitespace-pre-wrap text-gray-100">
-                                  {message.content}
+                      ) : (
+                        <div className="text-gray-200">
+                          {message.role === 'user' ? (
+                            <div className="space-y-2">
+                              {message.attachments && message.attachments.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {message.attachments.map((att, idx) => (
+                                    att.type === 'image' ? (
+                                      <img
+                                        key={idx}
+                                        src={att.url}
+                                        alt={att.name}
+                                        className="max-w-xs max-h-48 rounded-lg border border-gray-700"
+                                      />
+                                    ) : (
+                                      <div key={idx} className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg">
+                                        <FileText size={16} className="text-gray-400" />
+                                        <span className="text-sm text-gray-300">{att.name}</span>
+                                      </div>
+                                    )
+                                  ))}
                                 </div>
+                              )}
+                              <div className="whitespace-pre-wrap text-gray-100">
+                                {message.content}
                               </div>
-                            ) : (
-                              <MarkdownRenderer content={message.content} />
-                            )}
-                          </div>
-                        )}
+                            </div>
+                          ) : (
+                            <MarkdownRenderer content={message.content} />
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
                 </div>
               );
             })}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
@@ -1002,49 +876,7 @@ export const ChatPanel: React.FC = () => {
               ))}
             </div>
           )}
-          <div 
-            className="flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 focus-within:border-blue-500 transition-colors"
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onDrop={async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              
-              const files = e.dataTransfer.files;
-              if (!files || files.length === 0) return;
-              
-              const newAtts: Attachment[] = [];
-              
-              for (let i = 0; i < files.length; i++) {
-                const f = files[i];
-                if (f.type.startsWith('image/')) {
-                  const base64 = await fileToBase64(f);
-                  const dataUrl = `data:${f.type};base64,${base64}`;
-                  newAtts.push({
-                    id: `img-${Date.now()}-${i}`,
-                    type: 'image',
-                    name: f.name,
-                    mimeType: f.type,
-                    size: f.size,
-                    url: dataUrl,
-                  });
-                } else {
-                  newAtts.push({
-                    id: `file-${Date.now()}-${i}`,
-                    type: 'file',
-                    name: f.name,
-                    mimeType: f.type,
-                    size: f.size,
-                    url: URL.createObjectURL(f),
-                  });
-                }
-              }
-              
-              setAttachments([...attachments, ...newAtts]);
-            }}
-          >
+          <div className="flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 focus-within:border-blue-500 transition-colors">
             <div className="flex items-center gap-1 pb-1">
               <button
                 className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
@@ -1109,21 +941,7 @@ export const ChatPanel: React.FC = () => {
                 }}
               />
             </div>
-            {input.length > 200 && (
-              <button
-                onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
-                className={`p-1.5 rounded transition-colors ${showMarkdownPreview ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                title={showMarkdownPreview ? 'Edit' : 'Preview'}
-              >
-                <span className="text-xs">{showMarkdownPreview ? '✏️' : '👁️'}</span>
-              </button>
-            )}
-            {showMarkdownPreview ? (
-              <div className="flex-1 min-h-[60px] max-h-[200px] overflow-y-auto bg-gray-900 rounded-lg px-3 py-2 text-gray-200 text-sm whitespace-pre-wrap">
-                {input}
-              </div>
-            ) : (
-              <textarea
+            <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => {
@@ -1140,7 +958,6 @@ export const ChatPanel: React.FC = () => {
               className="flex-1 bg-transparent text-white placeholder-gray-500 text-sm resize-none focus:outline-none min-h-[24px] max-h-[200px]"
               disabled={!activeModel}
             />
-            )}
             {isLoading ? (
               <button
                 onClick={stopStreaming}
@@ -1162,7 +979,7 @@ export const ChatPanel: React.FC = () => {
           </div>
           {/* Keyboard shortcuts hint */}
           <div className="flex items-center justify-between mt-2 text-xs text-gray-600">
-            <span>↑↓ History • Ctrl+Enter Send • Esc Close</span>
+            <span>?????? History ??? Ctrl+Enter Send ??? Esc Close</span>
             {inputHistory.length > 0 && (
               <span>{inputHistory.length} saved</span>
             )}
@@ -1228,3 +1045,4 @@ export const ChatPanel: React.FC = () => {
     </div>
   );
 };
+

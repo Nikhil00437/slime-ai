@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAppContext } from '../store/AppContext';
-import { RotateCw, Cpu, Bot, Globe, Eye, EyeOff, ArrowLeft, FolderOpen, RefreshCw, Link, Unlink, Brain, Shield, Wand2, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { RotateCw, Cpu, Bot, Globe, Eye, EyeOff, ArrowLeft, FolderOpen, RefreshCw, Link, Unlink, Brain, Shield, Wand2, Plus, Trash2, Pencil, Check, X, Star, Clock, DollarSign, Hash, RotateCcw, Library } from 'lucide-react';
 import { Skill, DEFAULT_SKILLS } from '../types';
 
 export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
@@ -510,6 +510,147 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                   }`}
                 />
               </button>
+            </div>
+
+            {/* New Settings: Toggles */}
+            <div className="space-y-3 pt-3 border-t border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock size={14} className="text-gray-400" />
+                  <span className="text-sm text-gray-300">Show Timestamps</span>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      showTimestamps: !prev.showTimestamps,
+                    }))
+                  }
+                  className={`w-10 h-5 rounded-full transition-colors ${
+                    settings.showTimestamps ? 'bg-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      settings.showTimestamps ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Hash size={14} className="text-gray-400" />
+                  <span className="text-sm text-gray-300">Show Token Count</span>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      showTokenCount: !prev.showTokenCount,
+                    }))
+                  }
+                  className={`w-10 h-5 rounded-full transition-colors ${
+                    settings.showTokenCount ? 'bg-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      settings.showTokenCount ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <DollarSign size={14} className="text-gray-400" />
+                  <span className="text-sm text-gray-300">Show Cost Estimate</span>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      showCostEstimate: !prev.showCostEstimate,
+                    }))
+                  }
+                  className={`w-10 h-5 rounded-full transition-colors ${
+                    settings.showCostEstimate ? 'bg-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      settings.showCostEstimate ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <RotateCcw size={14} className="text-gray-400" />
+                  <span className="text-sm text-gray-300">Auto-retry Failed Requests</span>
+                </div>
+                <button
+                  onClick={() =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      autoRetry: !prev.autoRetry,
+                    }))
+                  }
+                  className={`w-10 h-5 rounded-full transition-colors ${
+                    settings.autoRetry ? 'bg-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      settings.autoRetry ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Prompts Section */}
+            <div className="space-y-2 pt-3 border-t border-gray-700">
+              <div className="flex items-center justify-between">
+                <h5 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Library size={14} className="text-gray-400" />
+                  Quick Prompts
+                </h5>
+                <button
+                  onClick={() => {
+                    const name = prompt('Prompt name:');
+                    if (name) {
+                      const content = prompt('Prompt content:');
+                      if (content) {
+                        // Access addQuickPrompt from context
+                        (window as any).__addQuickPrompt?.(name, content);
+                      }
+                    }
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  + Add
+                </button>
+              </div>
+              {settings.quickPrompts.length === 0 ? (
+                <p className="text-xs text-gray-500">No quick prompts saved</p>
+              ) : (
+                <div className="space-y-1">
+                  {settings.quickPrompts.map(prompt => (
+                    <div key={prompt.id} className="flex items-center justify-between text-xs bg-gray-800 px-2 py-1.5 rounded">
+                      <span className="text-gray-300">{prompt.name}</span>
+                      <button
+                        onClick={() => (window as any).__removeQuickPrompt?.(prompt.id)}
+                        className="text-gray-500 hover:text-red-400"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

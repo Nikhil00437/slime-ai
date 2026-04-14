@@ -319,7 +319,7 @@ export async function checkProviderHealth(
 
 export interface StreamCallbacks {
   onChunk: (text: string) => void;
-  onComplete: () => void;
+  onComplete: (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
   onError: (error: string) => void;
 }
 
@@ -418,7 +418,12 @@ export async function streamChatCompletion(
               callbacks?.onChunk(parsed.message.content);
             }
             if (parsed.done) {
-              callbacks?.onComplete();
+              const usage = parsed.prompt_eval_count || parsed.eval_count ? {
+                inputTokens: parsed.prompt_eval_count || 0,
+                outputTokens: parsed.eval_count || 0,
+                totalTokens: (parsed.prompt_eval_count || 0) + (parsed.eval_count || 0),
+              } : undefined;
+              callbacks?.onComplete(usage);
               return;
             }
           } catch {}
@@ -507,8 +512,23 @@ export async function streamChatCompletion(
         const lines = chunk.split('\n');
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.includes('message_end')) continue;
-          if (!trimmed.startsWith('data: ')) continue;
+          if (!trimmed || trimmed.includes('message_stop')) {
+              // Try to extract usage from message_stop event
+              try {
+                const parsed = JSON.parse(trimmed.slice(6));
+                if (parsed.usage) {
+                  callbacks?.onComplete({
+                    inputTokens: parsed.usage.input_tokens || 0,
+                    outputTokens: parsed.usage.output_tokens || 0,
+                    totalTokens: (parsed.usage.input_tokens || 0) + (parsed.usage.output_tokens || 0),
+                  });
+                  return;
+                }
+              } catch {}
+              callbacks?.onComplete();
+              return;
+            }
+            if (!trimmed.startsWith('data: ')) continue;
 
           try {
             const parsed = JSON.parse(trimmed.slice(6));
@@ -697,6 +717,7 @@ try {
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let finalUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -724,6 +745,10 @@ try {
         if (delta) {
           callbacks?.onChunk(delta);
         }
+        // Extract usage from final chunk
+        if (parsed.usage) {
+          finalUsage = parsed.usage;
+        }
       } catch (e) {
         // Log error if needed for debugging
       }
@@ -731,7 +756,11 @@ try {
     buffer = lines[lines.length - 1];
   }
   
-  callbacks?.onComplete();
+  callbacks?.onComplete(finalUsage ? {
+    inputTokens: finalUsage.prompt_tokens || 0,
+    outputTokens: finalUsage.completion_tokens || 0,
+    totalTokens: finalUsage.total_tokens || 0,
+  } : undefined);
 } catch (err: any) {
   callbacks?.onError(err.message || 'Stream error');
 }
