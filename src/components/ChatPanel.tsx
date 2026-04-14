@@ -290,7 +290,7 @@ export const ChatPanel: React.FC = () => {
             <div className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-gray-800">
               <Sparkles size={48} className="text-blue-400" />
             </div>
-            <h1 className="text-2xl font-bold text-white mb-2">MultiModel Chat</h1>
+            <h1 className="text-2xl font-bold text-white mb-2">Slime AI</h1>
             <p className="text-gray-400 max-w-md mb-8">
               Chat with AI models from Ollama, LM Studio, and OpenRouter. Select a model from the
               sidebar to get started.
@@ -582,7 +582,7 @@ export const ChatPanel: React.FC = () => {
             )}
           </div>
           <p className="text-xs text-gray-600 mt-2 text-center">
-            MultiModel Chat — Responses may contain errors. Verify important information.
+            Slime AI — Responses may contain errors. Verify important information.
           </p>
         </div>
       </div>
