@@ -1,7 +1,53 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../store/AppContext';
-import { RotateCw, Cpu, Bot, Globe, Eye, EyeOff, ArrowLeft, FolderOpen, RefreshCw, Link, Unlink, Brain, Shield, Wand2, Plus, Trash2, Pencil, Check, X, Star, Clock, DollarSign, Hash, RotateCcw, Library } from 'lucide-react';
-import { Skill, DEFAULT_SKILLS } from '../types';
+import { RotateCw, Cpu, Bot, Globe, Eye, EyeOff, ArrowLeft, FolderOpen, RefreshCw, Link, Unlink, Brain, Shield, Clock, DollarSign, Hash, RotateCcw, Library, Wrench, CheckSquare, Square, Info, X, BarChart3, ChevronRight, Terminal, Play, Pause, AlertTriangle } from 'lucide-react';
+import { TOOL_SETTINGS } from '../types';
+import { AnalyticsDashboard } from './AnalyticsDashboard';
+
+// Helper components for tool settings
+const WebToolItem = ({ toolName }: { toolName: string }) => {
+  return (
+    <ToolSettingsItem toolName={toolName} />
+  );
+};
+
+const UtilityToolItem = ({ toolName }: { toolName: string }) => {
+  return <ToolSettingsItem toolName={toolName} />;
+};
+
+const FileSystemToolItem = ({ toolName }: { toolName: string }) => {
+  return <ToolSettingsItem toolName={toolName} />;
+};
+
+const ToolSettingsItem = ({ toolName }: { toolName: string }) => {
+  const { toolSettings, toggleTool } = useAppContext();
+  const toolInfo = TOOL_SETTINGS[toolName];
+  if (!toolInfo) return null;
+  
+  return (
+    <div className="flex items-center justify-between bg-gray-800/50 p-2 rounded-lg">
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-gray-300 font-mono">{toolName}</div>
+        <div className="text-xs text-gray-500 truncate">{toolInfo.description}</div>
+      </div>
+      <button
+        onClick={() => toggleTool(toolName)}
+        className={`p-1.5 rounded transition-colors btn-press ${
+          toolSettings.enabledTools[toolName] 
+            ? 'text-green-400 hover:bg-green-900/30' 
+            : 'text-gray-600 hover:bg-gray-700'
+        }`}
+        title={toolSettings.enabledTools[toolName] ? 'Disable' : 'Enable'}
+      >
+        {toolSettings.enabledTools[toolName] ? (
+          <CheckSquare size={18} />
+        ) : (
+          <Square size={18} />
+        )}
+      </button>
+    </div>
+  );
+};
 
 export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const {
@@ -19,12 +65,13 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     userMemory,
     updateUserMemory,
     saveApiKeyToVault,
-    skills,
-    setSkills,
+    toolSettings,
+    toggleTool,
+    resetToolSettings,
   } = useAppContext();
 
-  const [showKeys, setShowKeys] = React.useState<Record<string, boolean>>({});
-  const [localKeys, setLocalKeys] = React.useState<Record<string, string>>(() => {
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [localKeys, setLocalKeys] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     providers.forEach((p) => {
       init[p.id] = p.apiKey || '';
@@ -32,19 +79,19 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     return init;
   });
 
-  const [memoryText, setMemoryText] = React.useState<string>(
+  const [memoryText, setMemoryText] = useState<string>(
     userMemory?.facts?.join('\n') || ''
   );
 
-  const [keySaved, setKeySaved] = React.useState(false);
+  // Update memory text when userMemory changes
+  React.useEffect(() => {
+    if (userMemory?.facts) {
+      setMemoryText(userMemory.facts.join('\n'));
+    }
+  }, [userMemory]);
 
-  // Skills editing state
-  const [editingSkillId, setEditingSkillId] = React.useState<string | null>(null);
-  const [editDraft, setEditDraft] = React.useState<Partial<Skill>>({});
-  const [showNewSkillForm, setShowNewSkillForm] = React.useState(false);
-  const [newSkill, setNewSkill] = React.useState<Partial<Skill>>({
-    name: '', description: '', systemPrompt: '', icon: '🤖', category: 'custom', builtIn: false, enabled: true,
-  });
+  const [keySaved, setKeySaved] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const statusColors: Record<string, string> = {
     connected: 'bg-green-500',
@@ -203,15 +250,46 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             </div>
           )}
 
+          {/* Analytics Section */}
+          <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
+            <button
+              onClick={() => setShowAnalytics(!showAnalytics)}
+              className="w-full flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 size={16} className="text-blue-400" />
+                <h5 className="text-sm font-semibold text-white">Skill Analytics</h5>
+              </div>
+              <ChevronRight
+                size={16}
+                className={`text-gray-500 transition-transform ${showAnalytics ? 'rotate-90' : ''}`}
+              />
+            </button>
+            {showAnalytics && (
+              <div className="mt-3">
+                <AnalyticsDashboard onClose={() => setShowAnalytics(false)} />
+              </div>
+            )}
+          </div>
+
           {/* Memory Section */}
           <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Brain size={16} className="text-purple-400" />
               <h5 className="text-sm font-semibold text-white">Long-term Memory</h5>
+              {vault.vaultConnected && (
+                <span className="text-xs text-green-400 ml-auto">Auto-save enabled</span>
+              )}
             </div>
             <p className="text-xs text-gray-500">
               Store facts about yourself that AI models will remember across conversations.
+              {!vault.vaultConnected && ' Connect a vault to enable auto-saving.'}
             </p>
+            {userMemory?.facts && userMemory.facts.length > 0 && (
+              <div className="text-xs text-gray-400">
+                <span className="text-purple-400">{userMemory.facts.length}</span> facts stored
+              </div>
+            )}
             <textarea
               value={memoryText}
               onChange={(e) => setMemoryText(e.target.value)}
@@ -655,174 +733,357 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* Skills Section */}
+        {/* Loop Execution Section */}
         <div className="space-y-3">
-          <h4 className="text-sm font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
-            <Wand2 size={16} />
-            Skills
+          <h4 className="text-sm font-semibold text-green-400 uppercase tracking-wider flex items-center gap-2">
+            <Terminal size={16} />
+            Loop Execution
           </h4>
-          <p className="text-xs text-gray-500">
-            Skills inject a system prompt override when selected in chat.
-          </p>
+          
+          <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-4">
+            {/* Enable Loop */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-gray-300">Enable Loop Mode</div>
+                <div className="text-xs text-gray-500">Run iterative tasks with configurable stop conditions</div>
+              </div>
+              <button
+                onClick={() => setSettings(prev => ({ ...prev, loopEnabled: !prev.loopEnabled }))}
+                className={`p-2 rounded-lg transition-colors ${
+                  settings.loopEnabled 
+                    ? 'bg-green-500/20 text-green-400' 
+                    : 'bg-gray-800 text-gray-500'
+                }`}
+              >
+                {settings.loopEnabled ? <Play size={16} /> : <Pause size={16} />}
+              </button>
+            </div>
 
-          <div className="space-y-2">
-            {skills.map((skill) => (
-              <div key={skill.id} className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-                {editingSkillId === skill.id ? (
-                  <div className="p-3 space-y-2">
-                    <div className="flex gap-2">
-                      <input
-                        value={editDraft.icon ?? skill.icon}
-                        onChange={e => setEditDraft(d => ({ ...d, icon: e.target.value }))}
-                        className="w-12 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-center"
-                        placeholder="🤖"
-                      />
-                      <input
-                        value={editDraft.name ?? skill.name}
-                        onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))}
-                        className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                        placeholder="Skill name"
-                      />
-                    </div>
+            {settings.loopEnabled && (
+              <>
+                {/* Loop Configuration */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Max Iterations</label>
                     <input
-                      value={editDraft.description ?? skill.description}
-                      onChange={e => setEditDraft(d => ({ ...d, description: e.target.value }))}
-                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                      placeholder="Short description"
+                      type="number"
+                      value={settings.loopConfig.maxIterations}
+                      onChange={e => setSettings(prev => ({
+                        ...prev,
+                        loopConfig: { ...prev.loopConfig, maxIterations: Math.max(1, parseInt(e.target.value) || 1) }
+                      }))}
+                      min={1}
+                      max={100}
+                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
                     />
-                    <textarea
-                      value={editDraft.systemPrompt ?? skill.systemPrompt}
-                      onChange={e => setEditDraft(d => ({ ...d, systemPrompt: e.target.value }))}
-                      rows={4}
-                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white resize-none focus:outline-none focus:border-blue-500"
-                      placeholder="System prompt..."
-                    />
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        onClick={() => { setEditingSkillId(null); setEditDraft({}); }}
-                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-white"
-                      ><X size={12} /> Cancel</button>
-                      <button
-                        onClick={() => {
-                          setSkills(prev => prev.map(s =>
-                            s.id === skill.id ? { ...s, ...editDraft } : s
-                          ));
-                          setEditingSkillId(null); setEditDraft({});
-                        }}
-                        className="flex items-center gap-1 px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded"
-                      ><Check size={12} /> Save</button>
-                    </div>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-3 px-3 py-2.5">
-                    <span className="text-lg">{skill.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-white font-medium">{skill.name}</div>
-                      <div className="text-xs text-gray-500 truncate">{skill.description}</div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => { setEditingSkillId(skill.id); setEditDraft({}); }}
-                        className="p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded transition-colors"
-                        title="Edit"
-                      ><Pencil size={13} /></button>
-                      {!skill.builtIn && (
-                        <button
-                          onClick={() => setSkills(prev => prev.filter(s => s.id !== skill.id))}
-                          className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
-                          title="Delete"
-                        ><Trash2 size={13} /></button>
-                      )}
-                      <button
-                        onClick={() => setSkills(prev => prev.map(s =>
-                          s.id === skill.id ? { ...s, enabled: !s.enabled } : s
-                        ))}
-                        className={`w-8 h-4 rounded-full transition-colors relative ${skill.enabled ? 'bg-blue-600' : 'bg-gray-700'}`}
-                        title={skill.enabled ? 'Disable' : 'Enable'}
-                      >
-                        <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${skill.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                      </button>
-                    </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Timeout (seconds)</label>
+                    <input
+                      type="number"
+                      value={settings.loopConfig.iterationTimeout / 1000}
+                      onChange={e => setSettings(prev => ({
+                        ...prev,
+                        loopConfig: { ...prev.loopConfig, iterationTimeout: Math.max(1000, (parseInt(e.target.value) || 30) * 1000) }
+                      }))}
+                      min={1}
+                      max={300}
+                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Stop Condition */}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Stop Condition</label>
+                  <select
+                    value={settings.loopConfig.stopCondition}
+                    onChange={e => setSettings(prev => ({
+                      ...prev,
+                      loopConfig: { ...prev.loopConfig, stopCondition: e.target.value as LoopConfig['stopCondition'] }
+                    }))}
+                    className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                  >
+                    <option value="manual">Manual (click stop)</option>
+                    <option value="maxIterations">Max Iterations</option>
+                    <option value="keyword">Keyword Detection</option>
+                    <option value="threshold">Threshold (tool results)</option>
+                  </select>
+                </div>
+
+                {/* Conditional fields */}
+                {settings.loopConfig.stopCondition === 'keyword' && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Stop Keyword</label>
+                    <input
+                      type="text"
+                      value={settings.loopConfig.stopKeyword || ''}
+                      onChange={e => setSettings(prev => ({
+                        ...prev,
+                        loopConfig: { ...prev.loopConfig, stopKeyword: e.target.value }
+                      }))}
+                      placeholder="e.g., DONE, COMPLETE"
+                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                    />
                   </div>
                 )}
-              </div>
-            ))}
-          </div>
 
-          {/* New skill form */}
-          {showNewSkillForm ? (
-            <div className="bg-gray-800 border border-blue-500/40 rounded-lg p-3 space-y-2">
-              <div className="text-xs font-semibold text-blue-400 mb-1">New Skill</div>
-              <div className="flex gap-2">
+                {settings.loopConfig.stopCondition === 'threshold' && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Stop Threshold</label>
+                    <input
+                      type="number"
+                      value={settings.loopConfig.stopThreshold || 0}
+                      onChange={e => setSettings(prev => ({
+                        ...prev,
+                        loopConfig: { ...prev.loopConfig, stopThreshold: Math.max(0, parseInt(e.target.value) || 0) }
+                      }))}
+                      min={0}
+                      className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                    />
+                  </div>
+                )}
+
+                {/* Auto-continue */}
+                <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="autoContinue"
+                      checked={settings.loopConfig.autoContinueOnToolResult}
+                      onChange={e => setSettings(prev => ({
+                        ...prev,
+                        loopConfig: { ...prev.loopConfig, autoContinueOnToolResult: e.target.checked }
+                      }))}
+                      className="w-4 h-4 rounded border-gray-600 bg-gray-800"
+                    />
+                    <label htmlFor="autoContinue" className="text-xs text-gray-400">
+                      Auto-continue on tool result
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Tool Execution Settings */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
+            <Wrench size={16} />
+            Tool Execution
+          </h4>
+          
+          <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-4">
+            {/* Timeout and retries */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Timeout (seconds)</label>
                 <input
-                  value={newSkill.icon}
-                  onChange={e => setNewSkill(s => ({ ...s, icon: e.target.value }))}
-                  className="w-12 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-center"
-                  placeholder="🤖"
-                />
-                <input
-                  value={newSkill.name}
-                  onChange={e => setNewSkill(s => ({ ...s, name: e.target.value }))}
-                  className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                  placeholder="Skill name"
+                  type="number"
+                  value={Math.round(((settings.toolSettings && settings.toolSettings.timeout) ? settings.toolSettings.timeout : 60000) / 1000)}
+                  onChange={e => {
+                    const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                    newSettings.timeout = Math.max(1000, parseInt(e.target.value) * 1000);
+                    setSettings(prev => ({ ...prev, toolSettings: newSettings }));
+                  }}
+                  min={1}
+                  max={120}
+                  className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
                 />
               </div>
-              <input
-                value={newSkill.description}
-                onChange={e => setNewSkill(s => ({ ...s, description: e.target.value }))}
-                className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                placeholder="Short description"
-              />
-              <textarea
-                value={newSkill.systemPrompt}
-                onChange={e => setNewSkill(s => ({ ...s, systemPrompt: e.target.value }))}
-                rows={4}
-                className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white resize-none focus:outline-none focus:border-blue-500"
-                placeholder="System prompt for this skill..."
-              />
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => { setShowNewSkillForm(false); setNewSkill({ name: '', description: '', systemPrompt: '', icon: '🤖', category: 'custom', builtIn: false, enabled: true }); }}
-                  className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-white"
-                ><X size={12} /> Cancel</button>
-                <button
-                  onClick={() => {
-                    if (!newSkill.name?.trim() || !newSkill.systemPrompt?.trim()) return;
-                    setSkills(prev => [...prev, {
-                      ...newSkill as Skill,
-                      id: `custom-${Date.now()}`,
-                      rank: 'normal' as const,
-                      rankReason: '',
-                      abilities: [],
-                      limitations: [],
-                      level: 1,
-                      thumbsUp: 0,
-                      thumbsDown: 0,
-                      createdAt: Date.now(),
-                    } as import('../slime/types').SlimeSkill]);
-                    setShowNewSkillForm(false);
-                    setNewSkill({ name: '', description: '', systemPrompt: '', icon: '🤖', category: 'custom', builtIn: false, enabled: true });
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Retries</label>
+                <input
+                  type="number"
+value={(settings.toolSettings && settings.toolSettings.maxRetries) !== undefined ? settings.toolSettings.maxRetries : 3}
+                  onChange={e => {
+                    const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                    newSettings.maxRetries = Math.max(0, parseInt(e.target.value) || 0);
+                    setSettings(prev => ({ ...prev, toolSettings: newSettings }));
                   }}
-                  className="flex items-center gap-1 px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded disabled:opacity-50"
-                  disabled={!newSkill.name?.trim() || !newSkill.systemPrompt?.trim()}
-                ><Check size={12} /> Create</button>
+                  min={0}
+                  max={10}
+                  className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                />
               </div>
             </div>
-          ) : (
-            <button
-              onClick={() => setShowNewSkillForm(true)}
-              className="w-full py-2 border border-dashed border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors"
-            >
-              <Plus size={14} /> New Skill
-            </button>
-          )}
+            
+            {/* Retry backoff and max concurrent */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Retry Backoff (ms)</label>
+                <input
+                  type="number"
+value={(settings.toolSettings && settings.toolSettings.retryBackoff) !== undefined ? settings.toolSettings.retryBackoff : 1000}
+                  onChange={e => {
+                    const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                    newSettings.retryBackoff = Math.max(100, parseInt(e.target.value) || 1000);
+                    setSettings(prev => ({ ...prev, toolSettings: newSettings }));
+                  }}
+                  min={100}
+                  className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Parallel</label>
+                <input
+                  type="number"
+value={(settings.toolSettings && settings.toolSettings.maxConcurrent) !== undefined ? settings.toolSettings.maxConcurrent : 3}
+                  onChange={e => {
+                    const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                    newSettings.maxConcurrent = Math.max(1, parseInt(e.target.value) || 3);
+                    setSettings(prev => ({ ...prev, toolSettings: newSettings }));
+                  }}
+                  min={1}
+                  max={10}
+                  className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300"
+                />
+              </div>
+            </div>
+            
+            {/* Stream results */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="streamResults"
+checked={(settings.toolSettings && settings.toolSettings.streamResults) !== undefined ? settings.toolSettings.streamResults : true}
+                onChange={e => {
+                  const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                  newSettings.streamResults = e.target.checked;
+                  setSettings(prev => ({ ...prev, toolSettings: newSettings }));
+                }}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800"
+              />
+              <label htmlFor="streamResults" className="text-xs text-gray-400">
+                Stream tool results
+              </label>
+            </div>
+            
+            {/* Prompt permission */}
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
+              <input
+                type="checkbox"
+                id="promptPermission"
+checked={(settings.toolSettings && settings.toolSettings.promptPermission) !== undefined ? settings.toolSettings.promptPermission : true}
+                onChange={e => {
+                  const newSettings = { ...(prev.toolSettings || { timeout: 60000, maxRetries: 3, retryBackoff: 1000, maxConcurrent: 3, streamResults: true, promptPermission: true }) };
+                  newSettings.promptPermission = e.target.checked;
+                  setSettings(prev => ({ ...prev, toolSettings: newSettings }));
+                }}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800"
+              />
+              <label htmlFor="promptPermission" className="text-xs text-gray-400">
+                Prompt for approval on sensitive tools (bash, write, delete)
+              </label>
+            </div>
+          </div>
+        </div>
 
-          <button
-            onClick={() => setSkills(DEFAULT_SKILLS as unknown as import('../slime/types').SlimeSkill[])}
-            className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
-          >
-            Reset to defaults
-          </button>
+        {/* Tools Section */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <Wrench size={16} />
+            Tools
+          </h4>
+          
+          <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500">
+                Enable or disable tools that AI models can use during conversations.
+                Disabled tools won't be available to the model.
+              </p>
+              <button
+                onClick={() => {
+                  if (confirm('Reset all tools to enabled?')) {
+                    resetToolSettings();
+                  }
+                }}
+                className="text-xs text-gray-500 hover:text-gray-300"
+                title="Reset to defaults"
+              >
+                <RotateCcw size={12} />
+              </button>
+            </div>
+            
+            {/* Category: Web */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-400 uppercase flex items-center gap-1">
+                <Globe size={12} />
+                Web
+              </div>
+              <WebToolItem toolName="web_search" />
+              <WebToolItem toolName="web_fetch" />
+              <WebToolItem toolName="codesearch" />
+            </div>
+            
+            {/* Category: Utility */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-400 uppercase flex items-center gap-1">
+                <Hash size={12} />
+                Utility
+              </div>
+              <UtilityToolItem toolName="calculate" />
+              <UtilityToolItem toolName="bash" />
+            </div>
+            
+            {/* Category: Filesystem (vault required) */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-400 uppercase flex items-center gap-1">
+                <FolderOpen size={12} />
+                Filesystem {vault.vaultConnected ? '' : '(Vault Required)'}
+              </div>
+              {!vault.vaultConnected && (
+                <div className="p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs text-yellow-400 flex items-center gap-2">
+                  <Info size={12} />
+                  Connect an Obsidian vault to enable filesystem tools
+                </div>
+              )}
+              {vault.vaultConnected && (
+                <>
+                  <FileSystemToolItem toolName="list_files" />
+                  <FileSystemToolItem toolName="read_file" />
+                  <FileSystemToolItem toolName="write_file" />
+                  <FileSystemToolItem toolName="edit_file" />
+                  <FileSystemToolItem toolName="mkdir" />
+                  <FileSystemToolItem toolName="delete_file" />
+                  <FileSystemToolItem toolName="delete_directory" />
+                  <FileSystemToolItem toolName="search_in_file" />
+                  <FileSystemToolItem toolName="get_file_info" />
+                </>
+              )}
+            </div>
+            
+            {/* Enable All / Disable All */}
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
+              <button
+                onClick={() => {
+                  const tools = Object.keys(TOOL_SETTINGS);
+                  for (const t of tools) {
+                    if (!toolSettings.enabledTools[t]) {
+                      toggleTool(t);
+                    }
+                  }
+                }}
+                className="flex-1 px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors"
+              >
+                Enable All
+              </button>
+              <button
+                onClick={() => {
+                  const tools = Object.keys(TOOL_SETTINGS);
+                  for (const t of tools) {
+                    if (toolSettings.enabledTools[t]) {
+                      toggleTool(t);
+                    }
+                  }
+                }}
+                className="flex-1 px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors"
+              >
+                Disable All
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Danger Zone */}

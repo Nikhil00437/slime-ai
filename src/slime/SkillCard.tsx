@@ -1,6 +1,6 @@
 import React from 'react';
-import { SlimeSkill, RANK_META } from './types';
-import { Zap, Star, Crown, Flame, Trash2, CheckCircle } from 'lucide-react';
+import { SlimeSkill, RANK_META, getNextLevelThreshold } from './types';
+import { Zap, Star, Crown, Flame, Trash2, CheckCircle, TrendingUp } from 'lucide-react';
 
 interface SkillCardProps {
   skill: SlimeSkill;
@@ -230,6 +230,43 @@ export const SkillCard: React.FC<SkillCardProps> = ({
               +{skill.abilities.length - 3} more
             </span>
           )}
+        </div>
+      )}
+
+      {/* Level progress bar */}
+      {!compact && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <TrendingUp size={11} style={{ color: meta.color }} />
+              <span style={{ fontSize: 11, color: meta.badgeText, fontWeight: 600 }}>
+                Lv.{skill.level}
+              </span>
+            </div>
+            <span style={{ fontSize: 10, color: 'rgba(200,200,220,0.4)' }}>
+              {skill.thumbsUp} / {getNextLevelThreshold(skill.level)} 👍
+            </span>
+          </div>
+          <div
+            style={{
+              width: '100%',
+              height: 4,
+              background: meta.badge,
+              borderRadius: 2,
+              overflow: 'hidden',
+              border: `1px solid ${meta.border}`,
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(100, Math.max(0, (skill.thumbsUp / getNextLevelThreshold(skill.level)) * 100))}%`,
+                height: '100%',
+                background: `linear-gradient(90deg, ${meta.border}, ${meta.color})`,
+                borderRadius: 2,
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
         </div>
       )}
 

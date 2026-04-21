@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAppContext } from '../store/AppContext';
 import { SettingsPanel } from './SettingsPanel';
 import {
@@ -19,9 +19,6 @@ import {
   GitBranch,
   Pencil,
   Download,
-  X,
-  Sliders,
-  Library,
 } from 'lucide-react';
 
 import logoUrl from '../assets/logo.jpg';
@@ -79,13 +76,11 @@ export const Sidebar: React.FC = () => {
     setShowSettings,
     detectModels,
     settings,
-    setSettings,
     togglePinConversation,
     duplicateConversation,
     renameConversation,
     branchConversation,
     exportConversation,
-    addQuickPrompt,
     importData,
     exportAllData,
   } = useAppContext();
@@ -99,7 +94,7 @@ export const Sidebar: React.FC = () => {
   const [editingTitle, setEditingTitle] = useState('');
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
-  const [swipedConvId, setSwipedConvId] = useState<string | null>(null);
+  const [swipedConvId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleProvider = (id: string) => {
@@ -250,7 +245,7 @@ export const Sidebar: React.FC = () => {
             </div>
 
             {showSettings ? (
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
                 <ErrorBoundary>
                   <SettingsPanel onBack={() => setShowSettings(false)} />
                 </ErrorBoundary>
@@ -405,14 +400,14 @@ export const Sidebar: React.FC = () => {
                           a.click();
                           URL.revokeObjectURL(url);
                         }}
-                        className="p-1 text-gray-500 hover:text-white transition-colors"
+                        className="p-1 text-gray-500 hover:text-white transition-colors btn-press"
                         title="Export all data"
                       >
                         <Download size={12} />
                       </button>
                       <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="p-1 text-gray-500 hover:text-white transition-colors"
+                        className="p-1 text-gray-500 hover:text-white transition-colors btn-press"
                         title="Import data"
                       >
                         <Download size={12} className="rotate-180" />
@@ -441,120 +436,158 @@ export const Sidebar: React.FC = () => {
                           No conversations yet
                         </p>
                       ) : (
-                        sortedConversations.slice(0, 20).map((conv) => (
-                          <div
-                            key={conv.id}
-                            className={`group flex items-center gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                              activeConversationId === conv.id
-                                ? 'bg-gray-800 text-white'
-                                : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
-                            } ${conv.isPinned ? 'bg-gray-800/30' : ''} ${swipedConvId === conv.id ? 'bg-red-900/30' : ''}`}
-                            onTouchStart={(e) => setTouchStartX(e.touches[0].clientX)}
-                            onTouchEnd={(e) => {
-                              if (touchStartX === null) return;
-                              const deltaX = e.changedTouches[0].clientX - touchStartX;
-                              if (deltaX < -50) {
-                                // Swipe left - delete
-                                deleteConversation(conv.id);
-                              } else if (deltaX > 50) {
-                                // Swipe right - toggle pin
-                                togglePinConversation(conv.id);
-                              }
-                              setTouchStartX(null);
-                            }}
-                          >
-                            <button
-                              onClick={() => setActiveConversation(conv.id)}
-                              className="flex-1 flex items-center gap-2 text-left min-w-0"
-                            >
-                              {conv.isPinned && <Pin size={10} className="text-blue-400 shrink-0" />}
-                              <MessageSquare size={14} className="shrink-0" />
-                              <span className="truncate text-sm">{conv.title}</span>
-                            </button>
+                        sortedConversations.slice(0, 20).map((conv) => {
+                          // Get last message preview
+                          const lastMessage = conv.messages[conv.messages.length - 1];
+                          const lastMessagePreview = lastMessage?.content 
+                            ? lastMessage.content.slice(0, 40).replace(/\n/g, ' ') + (lastMessage.content.length > 40 ? '...' : '')
+                            : '';
+                          
+                          // Relative time helper
+                          const getRelativeTime = (timestamp: number) => {
+                            const now = Date.now();
+                            const diff = now - timestamp;
+                            const minutes = Math.floor(diff / 60000);
+                            const hours = Math.floor(diff / 3600000);
+                            const days = Math.floor(diff / 86400000);
                             
-                            {/* Conversation menu */}
-                            <div className="relative">
+                            if (minutes < 1) return 'Just now';
+                            if (minutes < 60) return `${minutes}m ago`;
+                            if (hours < 24) return `${hours}h ago`;
+                            if (days === 1) return 'Yesterday';
+                            if (days < 7) return `${days}d ago`;
+                            return new Date(timestamp).toLocaleDateString();
+                          };
+                          
+                          return (
+                            <div
+                              key={conv.id}
+                              className={`group flex items-start gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer transition-colors hover-lift ${
+                                activeConversationId === conv.id
+                                  ? 'bg-gray-800 text-white'
+                                  : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
+                              } ${conv.isPinned ? 'bg-gray-800/30' : ''} ${swipedConvId === conv.id ? 'bg-red-900/30' : ''}`}
+                              onTouchStart={(e) => setTouchStartX(e.touches[0].clientX)}
+                              onTouchEnd={(e) => {
+                                if (touchStartX === null) return;
+                                const deltaX = e.changedTouches[0].clientX - touchStartX;
+                                if (deltaX < -50) {
+                                  // Swipe left - delete
+                                  deleteConversation(conv.id);
+                                } else if (deltaX > 50) {
+                                  // Swipe right - toggle pin
+                                  togglePinConversation(conv.id);
+                                }
+                                setTouchStartX(null);
+                              }}
+                            >
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShowConvMenuId(showConvMenuId === conv.id ? null : conv.id);
-                                }}
-                                className="p-1 opacity-0 group-hover:opacity-100 text-gray-500 hover:text-white transition-all"
+                                onClick={() => setActiveConversation(conv.id)}
+                                className="flex-1 flex flex-col items-start gap-1 text-left min-w-0"
                               >
-                                <MoreVertical size={12} />
+                                <div className="flex items-center gap-2 w-full">
+                                  {conv.isPinned && <Pin size={10} className="text-blue-400 shrink-0" />}
+                                  <MessageSquare size={14} className="shrink-0 mt-0.5" />
+                                  <span className="truncate text-sm font-medium">{conv.title}</span>
+                                </div>
+                                {lastMessagePreview && (
+                                  <span className="text-xs text-gray-600 truncate w-full pl-5">
+                                    {lastMessagePreview}
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-gray-600 pl-5">
+                                  {getRelativeTime(conv.updatedAt)} • {conv.messages.length} msgs
+                                </span>
                               </button>
-                              
-                              {showConvMenuId === conv.id && (
-                                <>
-                                  <div className="fixed inset-0 z-40" onClick={() => setShowConvMenuId(null)} />
-                                  <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl min-w-32">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        duplicateConversation(conv.id);
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 rounded-t-lg"
-                                    >
-                                      <Copy size={12} /> Duplicate
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingConvId(conv.id);
-                                        setEditingTitle(conv.title);
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
-                                    >
-                                      <Pencil size={12} /> Rename
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        togglePinConversation(conv.id);
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
-                                    >
-                                      <Pin size={12} /> {conv.isPinned ? 'Unpin' : 'Pin'}
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        branchConversation(conv.messages[0]?.id || conv.id);
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
-                                    >
-                                      <GitBranch size={12} /> Branch
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        exportConversation(conv.id, 'markdown');
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
-                                    >
-                                      <Download size={12} /> Export
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        deleteConversation(conv.id);
-                                        setShowConvMenuId(null);
-                                      }}
-                                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20 rounded-b-lg"
-                                    >
-                                      <Trash2 size={12} /> Delete
-                                    </button>
-                                  </div>
-                                </>
+                              {/* Unread indicator (if new messages since last view) */}
+                              {conv.messages.length > 0 && activeConversationId !== conv.id && (
+                                <span className="w-2 h-2 bg-blue-500 rounded-full shrink-0 mt-2" />
                               )}
+                            
+                              {/* Conversation menu */}
+                              <div className="relative">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowConvMenuId(showConvMenuId === conv.id ? null : conv.id);
+                                  }}
+                                  className="p-1 opacity-0 group-hover:opacity-100 text-gray-500 hover:text-white transition-all btn-press"
+                                >
+                                  <MoreVertical size={12} />
+                                </button>
+                               
+                                {showConvMenuId === conv.id && (
+                                  <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setShowConvMenuId(null)} />
+                                    <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl min-w-32 dropdown-animate">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          duplicateConversation(conv.id);
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 rounded-t-lg"
+                                      >
+                                        <Copy size={12} /> Duplicate
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setEditingConvId(conv.id);
+                                          setEditingTitle(conv.title);
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                      >
+                                        <Pencil size={12} /> Rename
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          togglePinConversation(conv.id);
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                      >
+                                        <Pin size={12} /> {conv.isPinned ? 'Unpin' : 'Pin'}
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          branchConversation(conv.messages[0]?.id || conv.id);
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                      >
+                                        <GitBranch size={12} /> Branch
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          exportConversation(conv.id, 'markdown');
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                      >
+                                        <Download size={12} /> Export
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          deleteConversation(conv.id);
+                                          setShowConvMenuId(null);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20 rounded-b-lg"
+                                      >
+                                        <Trash2 size={12} /> Delete
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   )}

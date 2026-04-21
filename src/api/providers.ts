@@ -317,12 +317,6 @@ export async function checkProviderHealth(
   }
 }
 
-export interface StreamCallbacks {
-  onChunk: (text: string) => void;
-  onComplete: (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
-  onError: (error: string) => void;
-}
-
 export interface ImageAttachment {
   type: 'image';
   url: string;
@@ -336,6 +330,36 @@ export interface FileAttachment {
   mimeType: string;
 }
 
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters?: {
+      type: string;
+      properties?: Record<string, any>;
+      required?: string[];
+    };
+  };
+}
+
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
+export interface StreamCallbacks {
+  onChunk: (text: string) => void;
+  onComplete: (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
+  onError: (error: string) => void;
+  onToolCalls?: (toolCalls: ToolCallDelta[]) => void;
+}
+
 export async function streamChatCompletion(
   provider: ProviderType,
   baseUrl: string,
@@ -346,7 +370,8 @@ export async function streamChatCompletion(
   maxTokens: number,
   apiKey?: string,
   callbacks?: StreamCallbacks,
-  images?: ImageAttachment[]
+  images?: ImageAttachment[],
+  tools?: ToolDefinition[]
 ): Promise<void> {
   
   if (provider === 'ollama') {
@@ -370,7 +395,7 @@ export async function streamChatCompletion(
       }
     }
     
-    const ollamaBody = {
+    const ollamaBody: any = {
       model: modelId,
       messages: ollamaMessages,
       stream: true,
@@ -378,6 +403,7 @@ export async function streamChatCompletion(
         temperature,
         num_predict: maxTokens,
       },
+      ...(tools && tools.length > 0 ? { tools } : {}),
     };
 
     try {
@@ -439,7 +465,7 @@ export async function streamChatCompletion(
         } catch {}
       }
     } catch (err: any) {
-      callbacks?.onError(err.message || 'Stream error');
+      callbacks?.onError(err instanceof Error ? err.message : 'Stream error');
     }
     return;
   }
@@ -482,6 +508,7 @@ export async function streamChatCompletion(
       messages: anthropicMessages,
       system: systemPrompt,
       stream: true,
+      ...(tools && tools.length > 0 ? { tools } : {}),
     };
 
     try {
@@ -535,6 +562,26 @@ export async function streamChatCompletion(
             if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
               callbacks?.onChunk(parsed.delta.text);
             }
+            // Handle tool_use content blocks in streaming
+            if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'tool_use') {
+              callbacks?.onToolCalls?.([{
+                index: parsed.content_block.index ?? 0,
+                id: parsed.content_block.id,
+                type: 'function',
+                function: {
+                  name: parsed.content_block.name,
+                  arguments: '',
+                },
+              }]);
+            }
+            if (parsed.type === 'input_json_delta' && parsed.delta?.partial_json) {
+              callbacks?.onToolCalls?.([{
+                index: parsed.index ?? 0,
+                function: {
+                  arguments: parsed.delta.partial_json,
+                },
+              }]);
+            }
           } catch {}
         }
       }
@@ -584,7 +631,7 @@ export async function streamChatCompletion(
     ];
 
     // 4. Construct the body with system_instruction at the top level
-    const geminiBody = {
+    const geminiBody: any = {
       contents: geminiContents,
       system_instruction: systemPrompt ? {
         parts: [{ text: systemPrompt }]
@@ -593,6 +640,15 @@ export async function streamChatCompletion(
         temperature,
         maxOutputTokens: maxTokens,
       },
+      ...(tools && tools.length > 0 ? {
+        tools: [{
+          functionDeclarations: tools.map(t => ({
+            name: t.function.name,
+            description: t.function.description,
+            parameters: t.function.parameters || { type: 'object', properties: {} },
+          })),
+        }],
+      } : {}),
     };
 
     try {
@@ -628,9 +684,25 @@ export async function streamChatCompletion(
           try {
             // Remove 'data: ' prefix and parse
             const parsed = JSON.parse(trimmed.slice(6));
-            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) {
-              callbacks?.onChunk(text);
+            const parts = parsed.candidates?.[0]?.content?.parts;
+            if (parts) {
+              for (const part of parts) {
+                if (part.text) {
+                  callbacks?.onChunk(part.text);
+                }
+                // Handle Gemini function call responses
+                if (part.functionCall) {
+                  callbacks?.onToolCalls?.([{
+                    index: 0,
+                    id: `call_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                      name: part.functionCall.name,
+                      arguments: JSON.stringify(part.functionCall.args || {}),
+                    },
+                  }]);
+                }
+              }
             }
           } catch (e) {
             // Silence parsing errors for incomplete stream chunks
@@ -638,8 +710,8 @@ export async function streamChatCompletion(
         }
       }
       callbacks?.onComplete();
-    } catch (err) {
-      callbacks?.onError(err.message || 'Stream error');
+    } catch (err: any) {
+      callbacks?.onError(err instanceof Error ? err.message : 'Stream error');
     }
     return;
   }
@@ -658,10 +730,35 @@ if (provider === 'lmstudio' && !normalized.endsWith('/v1')) {
 // 1. Refactored Message Formatting
 // Filter out empty system prompts to prevent '400' errors on strict providers
 // 1. Prepare your message array
-const formattedMessages: any[] = messages.map((m) => ({
-  role: m.role === 'model' ? 'assistant' : m.role,
-  content: m.content
-}));
+const formattedMessages: any[] = messages.map((m) => {
+  // Handle tool role messages for OpenAI-compatible APIs
+  if (m.role === 'tool') {
+    return {
+      role: 'tool',
+      content: m.content,
+      tool_call_id: m.toolCallId,
+    };
+  }
+  // Handle assistant messages with tool_calls
+  if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+    return {
+      role: 'assistant',
+      content: m.content || null,
+      tool_calls: m.toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function',
+        function: {
+          name: tc.function.name,
+          arguments: tc.function.arguments,
+        },
+      })),
+    };
+  }
+  return {
+    role: (m.role as string) === 'model' ? 'assistant' as const : m.role,
+    content: m.content,
+  };
+});
 
 // 2. Modified Image handling for LM Studio Vision
 if (images && images.length > 0 && provider === 'lmstudio') {
@@ -688,12 +785,13 @@ if (provider === 'openrouter') {
   requestHeaders['X-Title'] = 'SlimeAI';
 }
 
-const body = {
+const body: any = {
   model: modelId,
   messages: formattedMessages,
   temperature,
   max_tokens: maxTokens,
   stream: true,
+  ...(tools && tools.length > 0 ? { tools } : {}),
 };
 
 try {
@@ -741,9 +839,21 @@ try {
       try {
         const parsed = JSON.parse(line);
         // Standard OpenAI delta format
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) {
-          callbacks?.onChunk(delta);
+        const delta = parsed.choices?.[0]?.delta;
+        if (delta?.content) {
+          callbacks?.onChunk(delta.content);
+        }
+        // Handle tool_calls in streaming response
+        if (delta?.tool_calls) {
+          callbacks?.onToolCalls?.(delta.tool_calls.map((tc: any) => ({
+            index: tc.index ?? 0,
+            id: tc.id,
+            type: tc.type,
+            function: {
+              name: tc.function?.name,
+              arguments: tc.function?.arguments,
+            },
+          })));
         }
         // Extract usage from final chunk
         if (parsed.usage) {
@@ -761,8 +871,8 @@ try {
     outputTokens: finalUsage.completion_tokens || 0,
     totalTokens: finalUsage.total_tokens || 0,
   } : undefined);
-} catch (err: any) {
-  callbacks?.onError(err.message || 'Stream error');
+    } catch (err) {
+    callbacks?.onError(err instanceof Error ? err.message : 'Stream error');
 }
 }
 
@@ -847,9 +957,9 @@ export async function nonStreamChatCompletion(
     }
     
     const geminiMessages = [
-      { role: 'system', parts: [{ text: systemPrompt }] },
-      ...messages.slice(0, -1).map((m) => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
+      { role: 'system' as const, parts: [{ text: systemPrompt }] },
+      ...messages.slice(0, -1).filter(m => m.role !== 'tool').map((m) => ({
+        role: (m.role === 'assistant' ? 'model' : 'user') as 'model' | 'user',
         parts: [{ text: m.content }],
       })),
       { role: 'user', parts: geminiParts },

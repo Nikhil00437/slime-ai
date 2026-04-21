@@ -8,8 +8,10 @@ import {
   AppSettings,
   DEFAULT_SETTINGS,
   DEFAULT_PROVIDERS,
-  Skill,
   DEFAULT_SKILLS,
+  LoopConfig,
+  LoopState,
+  LoopHistoryEntry,
 } from '../types';
 import {
   detectOllamaModels,
@@ -21,8 +23,10 @@ import {
   detectGrokModels,
   checkProviderHealth,
   streamChatCompletion,
+  ToolDefinition,
+  ToolCallDelta,
 } from '../api/providers';
-import { rateSkillPerformance } from '../api/skillRating';
+import { searchMemory, extractMemoryKeywords } from '../api/memory';
 import {
   selectVaultFolder,
   restoreVaultHandle,
@@ -46,15 +50,24 @@ import {
   saveSkillsToVault,
   loadSkillsFromVault,
 } from '../api/vault';
-import { loadSkills, updateSkillFeedback as updateSkillFeedbackDB } from '../api/skillStorage';
+import { loadSkills } from '../api/skillStorage';
 import { Attachment } from '../components/AttachmentInput';
 import { SlimeSkill } from '../slime/types';
+import { TOOL_SETTINGS, Skill } from '../types';
+import {
+  detectSkillFromQuery,
+  getAttachmentTypeFromList,
+} from '../utils/skillDetection';
 
 interface VaultState {
   vaultConnected: boolean;
   vaultName: string | null;
   lastSyncTime: number | null;
   isSyncing: boolean;
+}
+
+interface ToolSettingsState {
+  enabledTools: Record<string, boolean>;
 }
 
 interface AppState {
@@ -77,6 +90,10 @@ interface AppState {
   inputHistoryIndex: number;
   searchQuery: string;
   searchResults: string[];
+  toolSettings: ToolSettingsState;
+  // Loop execution state
+  loopState: LoopState | null;
+  loopPaused: boolean;
 }
 
 interface AppContextType extends AppState {
@@ -104,8 +121,6 @@ interface AppContextType extends AppState {
   hasFileSystemAccess: () => boolean;
   saveApiKeyToVault: (providerId: string, apiKey: string) => Promise<void>;
   setSkills: React.Dispatch<React.SetStateAction<SlimeSkill[]>>;
-  activeSkill: SlimeSkill | null;
-  updateSkillFeedback: (skillId: string, thumbsUp: boolean) => Promise<void>;
   clearConversationMessages: (id: string) => void;
   // New feature methods
   regenerateLastResponse: () => Promise<void>;
@@ -124,85 +139,251 @@ interface AppContextType extends AppState {
   toggleFavoriteModel: (modelId: string) => void;
   importData: (data: string) => Promise<void>;
   exportAllData: () => Promise<string>;
+  // Tool management
+  toolSettings: ToolSettingsState;
+  toggleTool: (toolName: string) => void;
+  resetToolSettings: () => void;
+  // Tool execution functions
+  executeToolWithSettings: typeof executeToolWithSettings;
+  cancelToolExecution: typeof cancelToolExecution;
+  executeToolsParallel: typeof executeToolsParallel;
+  toolApprovalState: Record<string, 'pending' | 'approved' | 'denied'>;
+  setToolApproval: (toolName: string, state: 'pending' | 'approved' | 'denied') => void;
+  // Loop execution
+  startLoop: (prompt: string, config: LoopConfig) => void;
+  pauseLoop: () => void;
+  resumeLoop: () => void;
+  cancelLoop: () => void;
+  completeLoopIteration: (input: string, output: string, toolCalls?: string[], toolResults?: string[]) => void;
+  resetLoop: () => void;
+  setLoopState: React.Dispatch<React.SetStateAction<LoopState | null>>;
+  setLoopPaused: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
 
-export const AVAILABLE_TOOLS = [
-  {
+// Tool types - imported from types.ts or defined here
+export type { ToolDefinition } from '../types';
+
+export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
+  list_files: {
     type: "function",
     function: {
       name: "list_files",
-      description: "List all files in a specific directory recursively.",
+      description: "List all files in a directory recursively. Returns file paths separated by newlines. Use this to explore the vault structure.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The directory path to list, use empty string for root" }
+          path: { type: "string", description: "Directory path to list (empty or '/' for root)" },
+          pattern: { type: "string", description: "Optional glob pattern to filter files (e.g., '*.md', '*.ts')" }
         },
-        required: ["path"]
+        required: []
       }
     }
   },
-  {
+  read_file: {
     type: "function",
     function: {
       name: "read_file",
-      description: "Read the contents of a specific file.",
+      description: "Read the complete contents of a file.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The file path relative to vault root" }
+          path: { type: "string", description: "File path relative to vault root" },
+          offset: { type: "string", description: "Optional line number to start reading from" },
+          limit: { type: "string", description: "Optional number of lines to read" }
         },
         required: ["path"]
       }
     }
   },
-  {
+  write_file: {
     type: "function",
     function: {
       name: "write_file",
-      description: "Write content to a specific file (overwrites if exists).",
+      description: "Write content to a file. Creates parent directories if needed. WARNING: Overwrites existing files!",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The file path" },
-          content: { type: "string", description: "The content to write" }
+          path: { type: "string", description: "File path relative to vault root" },
+          content: { type: "string", description: "Content to write" }
         },
         required: ["path", "content"]
       }
     }
   },
-  {
+  edit_file: {
     type: "function",
     function: {
       name: "edit_file",
-      description: "Surgically edit a file by replacing specific target text with replacement text.",
+      description: "Edit a file by replacing specific text. Useful for targeted changes without rewriting the entire file.",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "The file path" },
-          target: { type: "string", description: "The exact text to find and replace" },
-          replacement: { type: "string", description: "The text to replace it with" }
+          path: { type: "string", description: "File path relative to vault root" },
+          target: { type: "string", description: "Exact text to find and replace (use escape sequences for newlines)" },
+          replacement: { type: "string", description: "Text to replace with" }
         },
         required: ["path", "target", "replacement"]
       }
     }
   },
-  {
+  mkdir: {
     type: "function",
     function: {
-      name: "web_search",
-      description: "Search the web for information.",
+      name: "mkdir",
+      description: "Create a new directory (folder). Creates parent directories if they don't exist.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "The search query" }
+          path: { type: "string", description: "Directory path to create" }
+        },
+        required: ["path"]
+      }
+    }
+  },
+  delete_file: {
+    type: "function",
+    function: {
+      name: "delete_file",
+      description: "Delete a file. Cannot delete directories - use delete_directory instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "File path to delete" }
+        },
+        required: ["path"]
+      }
+    }
+  },
+  delete_directory: {
+    type: "function",
+    function: {
+      name: "delete_directory",
+      description: "Delete an empty directory. Fails if directory contains files.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Directory path to delete" }
+        },
+        required: ["path"]
+      }
+    }
+  },
+  search_in_file: {
+    type: "function",
+    function: {
+      name: "search_in_file",
+      description: "Search for a pattern within a file and return matching lines with context.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "File path to search in" },
+          pattern: { type: "string", description: "Regex pattern to search for" }
+        },
+        required: ["path", "pattern"]
+      }
+    }
+  },
+  get_file_info: {
+    type: "function",
+    function: {
+      name: "get_file_info",
+      description: "Get metadata about a file (size, modified date, etc).",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "File path" }
+        },
+        required: ["path"]
+      }
+    }
+  },
+  web_search: {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Search the web for information. Returns title, snippet, and URL for each result.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+          num_results: { type: "string", description: "Number of results (default 5)" }
         },
         required: ["query"]
       }
     }
+  },
+  web_fetch: {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description: "Fetch and extract text content from a URL.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL to fetch" },
+          max_length: { type: "string", description: "Maximum characters to extract (default 5000)" }
+        },
+        required: ["url"]
+      }
+    }
+  },
+  calculate: {
+    type: "function",
+    function: {
+      name: "calculate",
+      description: "Evaluate a mathematical expression and return the result.",
+      parameters: {
+        type: "object",
+        properties: {
+          expression: { type: "string", description: "Math expression (e.g., '2 + 2', 'sqrt(16)', 'sin(0)')" }
+        },
+        required: ["expression"]
+      }
+    }
+  },
+  codesearch: {
+    type: "function",
+    function: {
+      name: "codesearch",
+      description: "Search code using Exa Code API. Returns relevant code snippets, documentation, and examples.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Code search query" },
+          tokens: { type: "string", description: "Number of tokens (default 5000)" }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  bash: {
+    type: "function",
+    function: {
+      name: "bash",
+      description: "Execute a bash command and return the output.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Command to execute" },
+          timeout: { type: "string", description: "Timeout in seconds (default 30)" }
+        },
+        required: ["command"]
+      }
+    }
   }
-];
+};
+
+// Convert to the format expected by LLM
+export const AVAILABLE_TOOLS = Object.values(TOOL_DEFINITIONS);
+
+// Get tools that are enabled and match criteria
+export function getEnabledTools(includeDisabled = false): ToolDefinition[] {
+  return AVAILABLE_TOOLS.filter(tool => 
+    includeDisabled || TOOL_SETTINGS[tool.function.name]?.enabled !== false
+  );
+}
 
 async function traverseVaultPath(handle: FileSystemDirectoryHandle, path: string): Promise<FileSystemDirectoryHandle | FileSystemFileHandle | null> {
   if (!path || path === '.' || path === '/') return handle;
@@ -231,17 +412,6 @@ async function traverseVaultPath(handle: FileSystemDirectoryHandle, path: string
   return current;
 }
 
-async function ensurePath(handle: FileSystemDirectoryHandle, path: string): Promise<FileSystemFileHandle | null> {
-  const parts = path.split('/').filter(Boolean);
-  let current: FileSystemDirectoryHandle = handle;
-  for (let i = 0; i < parts.length - 1; i++) {
-    current = await (current.getDirectoryHandle as any)(parts[i], { create: true });
-  }
-  if (parts.length > 0) {
-    return await current.getFileHandle(parts[parts.length - 1], { create: true });
-  }
-  return null;
-}
 
 async function listFilesRecursive(dirHandle: FileSystemDirectoryHandle, currentPath = ''): Promise<string[]> {
   const paths: string[] = [];
@@ -261,75 +431,309 @@ async function listFilesRecursive(dirHandle: FileSystemDirectoryHandle, currentP
   return paths;
 }
 
-export const handleToolExecution = async (name: string, args: any): Promise<any> => {
-  const handle = await restoreVaultHandle();
-  if (name !== 'web_search' && !handle) {
-    return { error: 'Vault not connected or permission denied.' };
+// Safe math evaluation to prevent code injection
+function safeMathEval(expression: string): number | string {
+  const sanitized = expression
+    .replace(/[^0-9+\-*/().sqrtpowcosinsintanlogpiexpi% ,]/gi, '')
+    .replace(/\s+/g, '');
+  
+  // Very limited math - only basic operations and specific functions
+  // Parse numbers from expression
+  const numbers = sanitized.match(/-?\d+\.?\d*/g) || [];
+  // Simple evaluation for basic expressions
+  if (numbers.length === 0) return 'Invalid expression';
+  if (numbers.length === 1) return parseFloat(numbers[0]);
+  
+  // Replace common functions
+  let expr = sanitized
+    .replace(/sqrt\(/g, 'Math.sqrt(')
+    .replace(/pow\(/g, 'Math.pow(')
+    .replace(/sin\(/g, 'Math.sin(')
+    .replace(/cos\(/g, 'Math.cos(')
+    .replace(/tan\(/g, 'Math.tan(')
+    .replace(/log\(/g, 'Math.log(')
+    .replace(/exp\(/g, 'Math.exp(')
+    .replace(/abs\(/g, 'Math.abs(')
+    .replace(/pi/gi, 'Math.PI')
+    .replace(/e(?![x])/gi, 'Math.E');
+  
+  // Only allow safe patterns
+  if (!/^[0-9+\-*/.() \s,Math.sqrtpowcosintanlogexabs]+$/i.test(expr)) {
+    return 'Expression contains disallowed operations';
   }
+  
+  try {
+    const result = Function(`"use strict"; return (${expr})`)();
+    if (typeof result === 'number' && isFinite(result)) {
+      return Math.round(result * 1000000000000) / 1000000000000;
+    }
+    return result;
+  } catch {
+    return 'Invalid expression';
+  }
+}
+
+// Clean Whoogle-style web search 
+async function searchWeb(query: string, numResults = 5): Promise<any> {
+  const results: Array<{title: string; snippet: string; url: string}> = [];
+  
+  // DuckDuckGo HTML (most reliable)
+  try {
+    const res = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&b=${numResults}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (res.ok) {
+      const html = await res.text();
+      const matches = html.matchAll(/href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/g);
+      for (const m of matches) {
+        const url = m[1];
+        const title = m[2].trim();
+        if (url && !url.includes('duckduckgo') && title.length > 3) {
+          results.push({ title, snippet: '', url });
+        }
+      }
+    }
+  } catch (e) { console.warn('DDG error:', e); }
+
+  // Fallback to Startpage
+  if (results.length === 0) {
+    try {
+      const res = await fetch(
+        `https://www.startpage.com/do/search?query=${encodeURIComponent(query)}`,
+        { signal: AbortSignal.timeout(8000) }
+      );
+      if (res.ok) {
+        const html = await res.text();
+        const matches = html.matchAll(/href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/g);
+        for (const m of matches) {
+          const url = m[1];
+          const title = m[2].trim();
+          if (url && !url.includes('startpage') && title.length > 3 && results.length < numResults) {
+            results.push({ title, snippet: '', url });
+          }
+        }
+      }
+    } catch (e) { console.warn('Startpage error:', e); }
+  }
+
+  if (results.length === 0) {
+    return { results: [{ title: 'No results', snippet: `No results for "${query}"`, url: '' }] };
+  }
+
+  // Dedupe and return
+  const seen = new Set<string>();
+  const filtered = results.filter(r => {
+    try {
+      const h = new URL(r.url).hostname;
+      if (seen.has(h)) return false;
+      seen.add(h);
+      return true;
+    } catch { return true; }
+  });
+
+  return { results: filtered.slice(0, numResults), count: filtered.length };
+}
+
+// Web fetch 
+async function fetchUrl(url: string, maxLength = 5000): Promise<any> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const text = await res.text();
+    const dom = new DOMParser().parseFromString(text.slice(0, maxLength), 'text/html');
+    dom.querySelectorAll('script,style').forEach(e => e.remove());
+    return { content: dom.body?.textContent?.replace(/\s+/g, ' ').trim() || text.slice(0, maxLength), url, length: text.length };
+  } catch (e: any) { return { error: e.message }; }
+}
+
+// Code search using Exa API
+async function codeSearchExa(query: string, tokens = 5000): Promise<any> {
+  try {
+    const res = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('exa_api_key') || ''}`
+      },
+      body: JSON.stringify({
+        query,
+        numTokens: tokens,
+        type: 'code'
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!res.ok) return { error: `Exa API error: ${res.status}` };
+    const data = await res.json();
+    return { results: data.results || [], count: data.results?.length || 0 };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// Execute bash command
+async function executeBash(command: string, timeout = 30000): Promise<any> {
+  // Note: Browser sandbox doesn't allow real bash execution
+  // This is a placeholder - in production you'd use a server-side API
+  return { 
+    error: 'Bash execution requires server-side API. Command would be: ' + command,
+    suggestion: 'Use web_search or web_fetch for browser-based tools.'
+  };
+}
+
+// Tool execution state for cancellation
+let activeToolAbortController: AbortController | null = null;
+
+// Execute tool with retry, timeout, and result streaming
+export async function executeToolWithSettings(
+  name: string, 
+  args: Record<string, any>,
+  settings: { timeout: number; maxRetries: number; retryBackoff: number; streamResults: boolean },
+  onStream?: (chunk: string) => void
+): Promise<any> {
+  let lastError: any = null;
+  
+  for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {
+    try {
+      // Create abort controller for this attempt
+      activeToolAbortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        activeToolAbortController?.abort();
+      }, settings.timeout);
+      
+      const result = await handleToolExecution(name, args);
+      clearTimeout(timeoutId);
+      activeToolAbortController = null;
+      
+      // Stream result if enabled
+      if (settings.streamResults && onStream && typeof result === 'string') {
+        onStream(JSON.stringify(result));
+      }
+      
+      return result;
+    } catch (e: any) {
+      lastError = e;
+      
+      // Check if cancelled
+      if (e.name === 'AbortError') {
+        return { error: 'Tool execution cancelled' };
+      }
+      
+      // Wait before retry with exponential backoff
+      if (attempt < settings.maxRetries) {
+        await new Promise(resolve => 
+          setTimeout(resolve, settings.retryBackoff * Math.pow(2, attempt))
+        );
+      }
+    }
+  }
+  
+  return { error: lastError?.message || 'Tool execution failed after retries' };
+}
+
+// Cancel running tool
+export function cancelToolExecution(): void {
+  if (activeToolAbortController) {
+    activeToolAbortController.abort();
+    activeToolAbortController = null;
+  }
+}
+
+// Execute tools in parallel
+export async function executeToolsParallel(
+  tools: Array<{ name: string; args: Record<string, any> }>,
+  settings: { timeout: number; maxRetries: number; retryBackoff: number; streamResults: boolean; maxConcurrent: number },
+  onStream?: (toolName: string, result: any) => void
+): Promise<Array<{ name: string; result: any }>> {
+  const results: Array<{ name: string; result: any }> = [];
+  const chunks = Math.ceil(tools.length / settings.maxConcurrent);
+  
+  for (let i = 0; i < chunks; i++) {
+    const batch = tools.slice(i * settings.maxConcurrent, (i + 1) * settings.maxConcurrent);
+    const batchResults = await Promise.all(
+      batch.map(tool => executeToolWithSettings(tool.name, tool.args, settings))
+    );
+    
+    for (let j = 0; j < batch.length; j++) {
+      const result = { name: batch[j].name, result: batchResults[j] };
+      results.push(result);
+      
+      if (onStream) {
+        onStream(batch[j].name, batchResults[j]);
+      }
+    }
+  }
+  
+  return results;
+}
+
+// Tool execution handler
+export const handleToolExecution = async (name: string, args: Record<string, any>): Promise<any> => {
+  if (name === 'web_search') {
+    return searchWeb(args.query, parseInt(args.num_results) || 5);
+  }
+  if (name === 'web_fetch') {
+    return fetchUrl(args.url, parseInt(args.max_length) || 5000);
+  }
+  if (name === 'calculate') {
+    return { result: safeMathEval(args.expression) };
+  }
+  if (name === 'codesearch') {
+    return codeSearchExa(args.query, parseInt(args.tokens) || 5000);
+  }
+  if (name === 'bash') {
+    return executeBash(args.command, parseInt(args.timeout) * 1000 || 30000);
+  }
+
+  const handle = await restoreVaultHandle();
+  if (!handle) return { error: 'Vault not connected' };
 
   try {
     switch (name) {
       case 'list_files': {
-        const root = args.path ? await traverseVaultPath(handle!, args.path) : handle;
-        if (!root || root.kind !== 'directory') return { error: `Directory not found: ${args.path}` };
-        const files = await listFilesRecursive(root as FileSystemDirectoryHandle, args.path ? `${args.path}/` : '');
-        return { files };
+        const root = args.path ? await traverseVaultPath(handle, args.path || '') : handle;
+        if (!root || root.kind !== 'directory') return { error: `Not found: ${args.path}` };
+        let files = await listFilesRecursive(root as FileSystemDirectoryHandle, args.path || '');
+        if (args.pattern) files = files.filter(f => new RegExp(args.pattern.replace(/\*/g, '.*')).test(f));
+        return { files, count: files.length };
       }
       case 'read_file': {
-        const fileNode = await traverseVaultPath(handle!, args.path);
-        if (!fileNode || fileNode.kind !== 'file') return { error: `File not found: ${args.path}` };
-        const file = await (fileNode as FileSystemFileHandle).getFile();
-        const content = await file.text();
-        return { content };
+        const node = await traverseVaultPath(handle, args.path);
+        if (!node || node.kind !== 'file') return { error: `Not found: ${args.path}` };
+        return { content: await (await node.getFile()).text(), path: args.path };
       }
       case 'write_file': {
-        const fh = await ensurePath(handle!, args.path);
-        if (!fh) return { error: `Invalid path: ${args.path}` };
-        const writable = await (fh as any).createWritable();
-        await writable.write(args.content);
-        await writable.close();
+        const parts = args.path.split('/');
+        const parent = parts.slice(0, -1).join('/') || '/';
+        const name = parts.pop() || '';
+        const p = parent === '/' ? handle : await traverseVaultPath(handle, parent);
+        if (!p) return { error: `Parent not found: ${parent}` };
+        const fh = await (p as FileSystemDirectoryHandle).getFileHandle(name, { create: true });
+        await (await fh.createWritable()).write(args.content);
         return { success: true };
       }
-      case 'edit_file': {
-        const fileNode = await traverseVaultPath(handle!, args.path);
-        if (!fileNode || fileNode.kind !== 'file') return { error: `File not found: ${args.path}` };
-        const file = await (fileNode as FileSystemFileHandle).getFile();
-        let content = await file.text();
-        if (!content.includes(args.target)) return { error: 'Target string not found in file.' };
-        content = content.replace(args.target, args.replacement);
-        const writable = await (fileNode as any).createWritable();
-        await writable.write(content);
-        await writable.close();
+      case 'delete_file': {
+        const parts = args.path.split('/');
+        const parent = parts.slice(0, -1).join('/') || '/';
+        const name = parts.pop() || '';
+        const p = parent === '/' ? handle : await traverseVaultPath(handle, parent);
+        if (!p) return { error: `Parent not found: ${parent}` };
+        await (p as FileSystemDirectoryHandle).removeEntry(name);
         return { success: true };
       }
-      case 'web_search': {
-        try {
-          const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query)}`);
-          const text = await response.text();
-          const domparser = new DOMParser();
-          const doc = domparser.parseFromString(text, 'text/html');
-          const results = Array.from(doc.querySelectorAll('.result')).slice(0, 3).map(el => {
-            const titleEl = el.querySelector('.result__title');
-            const snippetEl = el.querySelector('.result__snippet');
-            const urlEl = el.querySelector('.result__url');
-            return {
-              title: titleEl ? titleEl.textContent?.trim() : '',
-              snippet: snippetEl ? snippetEl.textContent?.trim() : '',
-              url: urlEl ? urlEl.getAttribute('href')?.trim() : ''
-            };
-          });
-          return { results: results.length > 0 ? results : [{ error: 'No results found' }] };
-        } catch (e) {
-          return { error: 'Failed to search the web' };
-        }
+      case 'create_folder': {
+        const parts = args.path.split('/');
+        const parent = parts.slice(0, -1).join('/') || '/';
+        const name = parts.pop() || '';
+        const p = parent === '/' ? handle : await traverseVaultPath(handle, parent);
+        if (!p) return { error: `Parent not found: ${parent}` };
+        await (p as FileSystemDirectoryHandle).getDirectoryHandle(name, { create: true });
+        return { success: true };
       }
-      default:
-        return { error: `Unknown tool: ${name}` };
+default: return { error: `Unknown: ${name}` };
     }
-  } catch (err: any) {
-    return { error: err.message || String(err) };
-  }
-};
+  } catch (e: any) { return { error: e.message }; }
+}
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -376,6 +780,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [inputHistoryIndex, setInputHistoryIndex] = useState(-1);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [loopState, setLoopState] = useState<LoopState | null>(null);
+  const [loopPaused, setLoopPaused] = useState(false);
+  const [toolApprovalState, setToolApprovalState] = useState<Record<string, 'pending' | 'approved' | 'denied'>>({});
+  const [toolSettings, setToolSettings] = useState<ToolSettingsState>(() => {
+    const saved = localStorage.getItem('mm_tool_settings');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {}
+    }
+    // Default: enable all tools
+    const initial: Record<string, boolean> = {};
+    for (const key of Object.keys(TOOL_SETTINGS)) {
+      initial[key] = true;
+    }
+    return { enabledTools: initial };
+  });
 
   const [vault, setVault] = useState<VaultState>({
     vaultConnected: false,
@@ -616,6 +1037,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [conversations]);
 
   useEffect(() => {
+    saveToStorage('mm_tool_settings', toolSettings);
+  }, [toolSettings]);
+
+  useEffect(() => {
     if (vault.vaultConnected && skills.length > 0) {
       const timeout = setTimeout(() => {
         saveSkillsToVault(skills).catch(console.error);
@@ -802,6 +1227,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let messageContent = content;
       const messageAttachments = attachments 
         ? attachments.map(a => ({
+            id: a.id,
             type: a.type,
             name: a.name,
             url: a.url,
@@ -809,7 +1235,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }))
         : undefined;
 
-      const userMessageContent = content;
       // let assistantResponseContent = '';
 
       const userMessage: ChatMessage = {
@@ -855,17 +1280,220 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }))
         : undefined;
 
-      const activeSkillNow = settings.activeSkillId
-        ? skills.find(s => s.id === settings.activeSkillId) ?? null
-        : null;
-      let effectiveSystemPrompt = activeSkillNow
-        ? activeSkillNow.systemPrompt
+      // Auto-recall relevant memory if enabled for this conversation
+      let memoryRecallContext = '';
+      if (conv?.memoryEnabled) {
+        const keywords = extractMemoryKeywords(content);
+        if (keywords.length > 0) {
+          const relevantMemory = await searchMemory(keywords.join(' '), 5);
+          if (relevantMemory.length > 0) {
+            memoryRecallContext = `\n\nRelevant memories:\n${relevantMemory.map(m => `- ${m.content}`).join('\n')}`;
+          }
+        }
+      }
+
+      // Auto-detect skill based on query content with enhanced confidence scoring
+      const detectSkillWithConfidence = (
+        query: string,
+        attachments: Attachment[]
+      ): { skill: Skill | null; confidence: number } => {
+        const attachmentType = getAttachmentTypeFromList(
+          attachments as unknown as Array<{ type: string }>
+        );
+        // Use DEFAULT_SKILLS for detection (they have keywords/memoryTriggers)
+        const allSkills: Skill[] = DEFAULT_SKILLS as Skill[];
+        const result = detectSkillFromQuery(query, allSkills, attachmentType);
+        return {
+          skill: result.skill,
+          confidence: result.confidence,
+        };
+      };
+
+      // Check if query contains memory trigger phrases
+      const shouldExtractMemory = (query: string): boolean => {
+        const lowerQuery = query.toLowerCase();
+        for (const skill of skills) {
+          if (!skill.enabled) continue;
+          const triggers = (skill as any).memoryTriggers || [];
+          if (triggers.some((t: string) => lowerQuery.includes(t.toLowerCase()))) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      // Extract and save user info from query
+      const extractAndSaveUserInfo = async (query: string, response: string): Promise<void> => {
+        // Use vault.vaultConnected from context instead of isVaultConnected()
+        if (!vault.vaultConnected || !userMemory) {
+          console.log('[Memory] Vault not connected or no userMemory');
+          return;
+        }
+        
+        const currentFacts = userMemory.facts || [];
+        if (currentFacts.length >= 50) {
+          console.log('[Memory] Memory limit reached (50 facts)');
+          return;
+        }
+        
+        const prompt = `Analyze the user's message and AI response. Extract any new factual information about the user (name, job, preferences, background, interests, skills, etc.).
+        
+User message: "${query}"
+AI response: "${response}"
+
+Current known facts:
+${currentFacts.map((f, i) => `${i + 1}. ${f}`).join('\n') || '(none)'}
+
+Return a JSON array of ONLY new facts to add. If no new facts, return empty array []. Focus on:
+- Personal info (name, age, location)
+- Professional info (job, company, skills, experience)  
+- Preferences (coding style, communication style, interests)
+- Background (education, projects, tools used)
+
+Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
+
+        try {
+          const provider = providers.find(p => p.id === activeModel.provider);
+          if (!provider?.apiKey) {
+            console.log('[Memory] No API key for provider');
+            return;
+          }
+          
+          // Use the appropriate API call based on provider
+          let res;
+          if (provider.id === 'openai' || provider.id === 'openrouter') {
+            res = await fetch(`${provider.baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${provider.apiKey}`,
+                ...(provider.id === 'openrouter' ? { 'HTTP-Referer': window.location.origin, 'X-Title': 'UnifiedLLM' } : {}),
+              },
+              body: JSON.stringify({
+                model: provider.id === 'openrouter' ? 'openai/gpt-4o-mini' : activeModel.id,
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 500,
+                temperature: 0.3,
+              }),
+            });
+          } else if (provider.id === 'anthropic') {
+            res = await fetch(`${provider.baseUrl}/messages`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': provider.apiKey,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: activeModel.id,
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 500,
+                temperature: 0.3,
+              }),
+            });
+          } else if (provider.id === 'gemini') {
+            res = await fetch(`${provider.baseUrl}/models/${activeModel.id}:generateContent?key=${provider.apiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { maxOutputTokens: 500, temperature: 0.3 },
+              }),
+            });
+          } else {
+            console.log('[Memory] Unsupported provider for memory extraction:', provider.id);
+            return;
+          }
+          
+          if (!res.ok) {
+            console.log('[Memory] API call failed:', res.status);
+            return;
+          }
+          
+          const data = await res.json();
+          let content = '';
+          
+          // Parse response based on provider
+          if (provider.id === 'anthropic') {
+            content = data.content?.[0]?.text || '';
+          } else if (provider.id === 'gemini') {
+            content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          } else {
+            content = data.choices?.[0]?.message?.content || '';
+          }
+          
+          if (!content) {
+            console.log('[Memory] No content in response');
+            return;
+          }
+          
+          // Try to parse JSON from response
+          const jsonMatch = content.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            let newFacts: string[] = [];
+            try {
+              newFacts = JSON.parse(jsonMatch[0]);
+            } catch (e) {
+              // Try to extract quoted strings
+              const quotedMatch = content.match(/"([^"]+)"/g);
+              if (quotedMatch) {
+                newFacts = quotedMatch.map(s => s.replace(/"/g, ''));
+              }
+            }
+            
+            if (Array.isArray(newFacts) && newFacts.length > 0) {
+              const filteredFacts = newFacts.filter((f: string) => 
+                f && typeof f === 'string' && f.length > 3 && f.length < 200 && 
+                !currentFacts.some(existing => existing.toLowerCase().includes(f.toLowerCase()))
+              );
+              
+              if (filteredFacts.length > 0) {
+                const updatedMemory: UserMemory = {
+                  ...userMemory,
+                  facts: [...currentFacts, ...filteredFacts],
+                };
+                await saveUserMemory(updatedMemory);
+                setUserMemory(updatedMemory);
+                console.log('[Memory] Saved new user facts:', filteredFacts);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[Memory] Failed to extract user info:', err);
+        }
+      };
+
+      // Use enhanced skill detection with confidence scoring and attachment awareness
+      const { skill: matchedSkill } = detectSkillWithConfidence(content, attachments || []);
+      let effectiveSystemPrompt = matchedSkill
+        ? ((matchedSkill as unknown as { systemPrompt?: string }).systemPrompt || settings.systemPrompt)
         : settings.systemPrompt;
 
-      effectiveSystemPrompt += `\n\nYou have access to the following tools:\n${JSON.stringify(AVAILABLE_TOOLS, null, 2)}\nTo use tools, output a markdown JSON block containing an array of tool call objects: \`\`\`json\n[{"name": "...", "arguments": {...}}]\n\`\`\`\nOnce you receive tool results, DO NOT call the tool again with the same arguments. Summarize the findings to the user.`;
+      // Add memory recall context if available
+      if (memoryRecallContext) {
+        effectiveSystemPrompt += memoryRecallContext;
+      }
 
-      const runCompletionLoop = async (currentMessages: ChatMessage[], loopCount = 0) => {
-        if (abortRef.current || loopCount > 5) {
+      // Filter tools by enabled settings
+      const enabledToolsList = AVAILABLE_TOOLS.filter(
+        tool => toolSettings.enabledTools[tool.function.name] !== false
+      );
+
+      // Convert to ToolDefinition format for native API tool calling
+      const nativeTools: ToolDefinition[] = enabledToolsList.map(t => ({
+        type: t.type,
+        function: {
+          name: t.function.name,
+          description: t.function.description,
+          parameters: t.function.parameters,
+        },
+      }));
+
+      // Add tool descriptions to system prompt as fallback for models that don't support native tool calling
+      effectiveSystemPrompt += `\n\nYou have access to the following tools:\n${JSON.stringify(enabledToolsList, null, 2)}\nTo use tools, output a markdown JSON block containing an array of tool call objects: \`\`\`json\n[{"name": "...", "arguments": {...}}]\n\`\`\`\nOnce you receive tool results, DO NOT call the tool again with the same arguments. Summarize the findings to the user.`;
+
+        const runCompletionLoop = async (currentMessages: ChatMessage[], loopCount = 0) => {
+        if (abortRef.current) {
           setIsLoading(false);
           return;
         }
@@ -892,6 +1520,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
 
         let assistantResponseContent = '';
+
+        // Accumulate native tool call deltas during streaming
+        const accumulatedToolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
 
         try {
           await streamChatCompletion(
@@ -920,6 +1551,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   )
                 );
               },
+              onToolCalls: (toolCallDeltas: ToolCallDelta[]) => {
+                for (const delta of toolCallDeltas) {
+                  const idx = delta.index ?? 0;
+                  const existing = accumulatedToolCalls.get(idx);
+                  if (!existing && delta.id) {
+                    // New tool call
+                    accumulatedToolCalls.set(idx, {
+                      id: delta.id,
+                      name: delta.function?.name || '',
+                      arguments: delta.function?.arguments || '',
+                    });
+                  } else if (existing) {
+                    // Accumulate delta
+                    if (delta.function?.name) existing.name += delta.function.name;
+                    if (delta.function?.arguments) existing.arguments += delta.function.arguments;
+                    if (delta.id) existing.id = delta.id;
+                  }
+                }
+              },
               onComplete: async (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => {
                 const responseTime = Date.now() - requestStartTime;
                 setConversations((prev) =>
@@ -934,29 +1584,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                       : c
                   )
                 );
-                
+
                 let parsedToolCalls: import('../types').ToolCall[] = [];
-                try {
-                  const jsonMatch = assistantResponseContent.match(/```(?:json)?\s*(\[\s*{\s*"name"[\s\S]*?\])\s*```/);
-                  if (jsonMatch) {
-                    const parsed = JSON.parse(jsonMatch[1]);
-                    if (Array.isArray(parsed)) {
-                      parsedToolCalls = parsed.map((tc: any) => ({
-                        id: generateId(),
-                        type: 'function',
-                        function: { name: tc.name || tc.tool, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || {}) }
-                      }));
+
+                // First: check for native API tool calls (from providers that support tools parameter)
+                if (accumulatedToolCalls.size > 0) {
+                  parsedToolCalls = Array.from(accumulatedToolCalls.values()).map(tc => ({
+                    id: tc.id || generateId(),
+                    type: 'function' as const,
+                    function: {
+                      name: tc.name,
+                      arguments: tc.arguments,
+                    },
+                  }));
+                }
+
+                // Fallback: parse markdown JSON tool calls (for models without native tool support)
+                if (parsedToolCalls.length === 0) {
+                  try {
+                    const jsonMatch = assistantResponseContent.match(/```(?:json)?\s*(\[\s*{\s*"name"[\s\S]*?\])\s*```/);
+                    if (jsonMatch) {
+                      const parsed = JSON.parse(jsonMatch[1]);
+                      if (Array.isArray(parsed)) {
+                        parsedToolCalls = parsed.map((tc: any) => ({
+                          id: generateId(),
+                          type: 'function' as const,
+                          function: { name: tc.name || tc.tool, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || {}) }
+                        }));
+                      }
                     }
-                  }
-                } catch (e) {}
+                  } catch (e) {}
+                }
 
                 if (parsedToolCalls.length > 0 && !abortRef.current) {
                   setIsExecutingTool(true);
                   setActiveTools(parsedToolCalls.map(tc => tc.function.name));
 
+                  // Create agent step entry
+                  const currentStep = loopCount + 1;
                   setConversations(prev => prev.map(c => c.id === activeConversationId ? {
                     ...c,
-                    messages: c.messages.map(m => m.id === loopAssistantMessageId ? { ...m, toolCalls: parsedToolCalls } : m)
+                    messages: c.messages.map(m => m.id === loopAssistantMessageId ? { ...m, toolCalls: parsedToolCalls } : m),
+                    agentSteps: [
+                      ...(c.agentSteps || []),
+                      {
+                        stepNumber: currentStep,
+                        toolCalls: parsedToolCalls,
+                        toolResults: [],
+                        timestamp: Date.now()
+                      }
+                    ]
                   } : c));
 
                   const results = await Promise.all(parsedToolCalls.map(async tc => {
@@ -973,28 +1650,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                     };
                   }));
 
-                  setIsExecutingTool(false);
-                  setActiveTools([]);
-
+                  // Update agent step with results
                   setConversations(prev => prev.map(c => c.id === activeConversationId ? {
                     ...c,
-                    messages: [...c.messages, ...results]
+                    messages: [...c.messages, ...results],
+                    agentSteps: (c.agentSteps || []).map((step, idx) => 
+                      idx === (c.agentSteps || []).length - 1 
+                        ? { ...step, toolResults: results }
+                        : step
+                    )
                   } : c));
+
+                  setIsExecutingTool(false);
+                  setActiveTools([]);
 
                   const nextContext = [...currentMessages, { ...loopAssistantMessage, content: assistantResponseContent, isStreaming: false, toolCalls: parsedToolCalls }, ...results];
                   await runCompletionLoop(nextContext, loopCount + 1);
                 } else {
                   setIsLoading(false);
-                  if (settings.activeSkillId && userMessageContent && assistantResponseContent) {
-                    const skill = skills.find(s => s.id === settings.activeSkillId);
-                    if (skill && provider.apiKey) {
-                      rateSkillPerformance(
-                        skill, userMessageContent, assistantResponseContent,
-                        activeModel.provider, provider.baseUrl, activeModel.id, provider.apiKey
-                      ).then(res => {
-                        if (res.thumbsUp) updateSkillFeedback(skill.id, true);
-                      }).catch(console.error);
-                    }
+                  
+                  // Auto-extract and save user info to memory if triggers detected
+                  if (shouldExtractMemory(content)) {
+                    extractAndSaveUserInfo(content, assistantResponseContent).catch(console.error);
                   }
                 }
               },
@@ -1003,7 +1680,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 setIsLoading(false);
               },
             },
-            imageAttachments
+            imageAttachments,
+            nativeTools
           );
         } catch (err: any) {
           setError(err.message);
@@ -1013,7 +1691,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       await runCompletionLoop(initialContextMessages);
     },
-    [activeModel, activeConversationId, conversations, providers, settings, skills]
+    [activeModel, activeConversationId, conversations, providers, settings, skills, vault, userMemory]
   );
 
   const stopStreaming = useCallback(() => {
@@ -1031,6 +1709,74 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, [activeConversationId]);
 
+  // Loop execution functions
+  const startLoop = useCallback((prompt: string, config: LoopConfig) => {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    setLoopState({
+      id,
+      status: 'running',
+      currentIteration: 0,
+      maxIterations: config.maxIterations,
+      startTime: Date.now(),
+      lastIterationTime: 0,
+      history: [],
+    });
+    setLoopPaused(false);
+  }, []);
+
+  const pauseLoop = useCallback(() => {
+    setLoopPaused(true);
+    setLoopState(prev =>
+      prev ? { ...prev, status: 'paused' } : null
+    );
+  }, []);
+
+  const resumeLoop = useCallback(() => {
+    setLoopPaused(false);
+    setLoopState(prev =>
+      prev ? { ...prev, status: 'running' } : null
+    );
+  }, []);
+
+  const cancelLoop = useCallback(() => {
+    setLoopState(prev =>
+      prev ? { ...prev, status: 'cancelled' } : null
+    );
+    setLoopPaused(false);
+  }, []);
+
+  const completeLoopIteration = useCallback(
+    (input: string, output: string, toolCalls: string[] = [], toolResults: string[] = []) => {
+      setLoopState(prev => {
+        if (!prev) return null;
+        const duration = Date.now() - prev.startTime;
+        const newEntry: LoopHistoryEntry = {
+          iteration: prev.currentIteration,
+          timestamp: Date.now(),
+          input,
+          output,
+          toolCalls,
+          toolResults,
+          duration,
+          status: 'success',
+        };
+        return {
+          ...prev,
+          currentIteration: prev.currentIteration + 1,
+          lastIterationTime: duration,
+          history: [...prev.history, newEntry],
+          status: prev.currentIteration + 1 >= prev.maxIterations ? 'completed' : 'running',
+        };
+      });
+    },
+    []
+  );
+
+  const resetLoop = useCallback(() => {
+    setLoopState(null);
+    setLoopPaused(false);
+  }, []);
+
   const updateProvider = useCallback((id: ProviderType, updates: Partial<Provider>) => {
     setProviders((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   }, []);
@@ -1047,21 +1793,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (c.id !== id) return c;
       return { ...c, messages: [], updatedAt: Date.now() };
     }));
-  }, []);
-
-  const updateSkillFeedback = useCallback(async (skillId: string, thumbsUp: boolean) => {
-    try {
-      await updateSkillFeedbackDB(skillId, thumbsUp);
-      setSkills((prev) =>
-        prev.map((s) => {
-          if (s.id !== skillId) return s;
-          const newThumbsUp = thumbsUp ? (s.thumbsUp ?? 0) + 1 : s.thumbsUp ?? 0;
-          return { ...s, thumbsUp: newThumbsUp };
-        })
-      );
-    } catch (err) {
-      console.error('Failed to update skill feedback:', err);
-    }
   }, []);
 
   useEffect(() => {
@@ -1115,7 +1846,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     
     // Resend the message
-    await sendMessage(userContent, userMessage.attachments);
+    await sendMessage(userContent, userMessage.attachments as any);
   }, [activeModel, activeConversationId, sendMessage]);
 
   const editLastMessage = useCallback(async (newContent: string) => {
@@ -1153,7 +1884,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     
     // Resend with new content
-    await sendMessage(newContent, messages[lastUserIndex].attachments);
+    await sendMessage(newContent, messages[lastUserIndex].attachments as any);
   }, [activeModel, activeConversationId, sendMessage]);
 
   const retryLastMessage = useCallback(async () => {
@@ -1192,7 +1923,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     
     // Resend the message
-    await sendMessage(userMessage.content, userMessage.attachments);
+    await sendMessage(userMessage.content, userMessage.attachments as any);
   }, [activeConversationId, sendMessage]);
 
   const togglePinConversation = useCallback((id: string) => {
@@ -1414,6 +2145,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return JSON.stringify(data, null, 2);
   }, [conversations, settings, skills]);
 
+  const toggleTool = useCallback((toolName: string) => {
+    setToolSettings(prev => ({
+      ...prev,
+      enabledTools: {
+        ...prev.enabledTools,
+        [toolName]: !prev.enabledTools[toolName]
+      }
+    }));
+  }, []);
+
+  const resetToolSettings = useCallback(() => {
+    const initial: Record<string, boolean> = {};
+    for (const key of Object.keys(TOOL_SETTINGS)) {
+      initial[key] = true;
+    }
+    setToolSettings({ enabledTools: initial });
+    localStorage.removeItem('mm_tool_settings');
+  }, []);
+
+  const setToolApproval = useCallback((toolName: string, state: 'pending' | 'approved' | 'denied') => {
+    setToolApprovalState(prev => ({ ...prev, [toolName]: state }));
+  }, []);
+
   // Update active model to track in recent
   useEffect(() => {
     if (activeModel) {
@@ -1428,9 +2182,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [activeModel?.id]);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) || null;
-  const activeSkill = settings.activeSkillId
-    ? skills.find(s => s.id === settings.activeSkillId) ?? null
-    : null;
 
   return (
     <AppContext.Provider
@@ -1451,7 +2202,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         activeTools,
         inputHistory,
         inputHistoryIndex,
-        setInputHistoryIndex,
         searchQuery,
         searchResults,
         setProviders,
@@ -1480,8 +2230,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         hasFileSystemAccess,
         skills,
         setSkills,
-        activeSkill,
-        updateSkillFeedback,
         // New feature methods
         regenerateLastResponse,
         editLastMessage,
@@ -1499,6 +2247,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         toggleFavoriteModel,
         importData,
         exportAllData,
+        // Tool management
+        toolSettings,
+        toggleTool,
+        resetToolSettings,
+        // Tool execution
+        executeToolWithSettings,
+        cancelToolExecution,
+        executeToolsParallel,
+        toolApprovalState,
+        setToolApproval,
+        // Loop execution
+        loopState,
+        loopPaused,
+        startLoop,
+        pauseLoop,
+        resumeLoop,
+        cancelLoop,
+        completeLoopIteration,
+        resetLoop,
+        setLoopState,
+        setLoopPaused,
       }}
     >
       {children}

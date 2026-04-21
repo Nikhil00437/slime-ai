@@ -23,6 +23,7 @@ export interface SlimeSkill {
   isDefault?: boolean;
   enabled: boolean;
   builtIn: boolean;
+  category?: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
 }
 
 export interface SkillGenerationResult {
@@ -38,17 +39,63 @@ export interface CompatibilityResult {
 
 export const LEVEL_THRESHOLDS = [0, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
 
-export function getLevelFromThumbsUp(thumbsUp: number): number {
-  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
-    if (thumbsUp >= LEVEL_THRESHOLDS[i]) {
-      return i + 1;
-    }
+/** Exponential growth factor for levels beyond 10 */
+const EXPONENTIAL_GROWTH_FACTOR = 1.5;
+
+/** Base threshold for exponential calculation (level 10 threshold) */
+const EXPONENTIAL_BASE = LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1]; // 10000
+
+/** Maximum predefined level index */
+const MAX_PREDEFINED_LEVEL = LEVEL_THRESHOLDS.length; // 10
+
+/**
+ * Get the thumbsUp threshold for a given level.
+ * Levels 1-10 use predefined thresholds.
+ * Levels 11+ use exponential formula: 10000 * 1.5^(level - 10)
+ */
+export function getThumbsUpForLevel(level: number): number {
+  if (level <= 0) return 0;
+  if (level <= MAX_PREDEFINED_LEVEL) {
+    return LEVEL_THRESHOLDS[level - 1];
   }
-  return 1;
+  // Exponential growth beyond level 10
+  return Math.floor(EXPONENTIAL_BASE * Math.pow(EXPONENTIAL_GROWTH_FACTOR, level - MAX_PREDEFINED_LEVEL));
 }
 
-export function getThumbsUpForLevel(level: number): number {
-  return LEVEL_THRESHOLDS[Math.min(level - 1, LEVEL_THRESHOLDS.length - 1)] || 0;
+/**
+ * Get the level from a given thumbsUp count.
+ * Handles both predefined thresholds (1-10) and exponential growth (11+).
+ */
+export function getLevelFromThumbsUp(thumbsUp: number): number {
+  // Check predefined thresholds first
+  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (thumbsUp >= LEVEL_THRESHOLDS[i]) {
+      const baseLevel = i + 1;
+      if (baseLevel < MAX_PREDEFINED_LEVEL) return baseLevel;
+      // thumbsUp >= 10000, check exponential levels
+      break;
+    }
+  }
+
+  // If below first threshold
+  if (thumbsUp < LEVEL_THRESHOLDS[0]) return 1;
+
+  // Check exponential levels beyond 10
+  let level = MAX_PREDEFINED_LEVEL;
+  while (thumbsUp >= getThumbsUpForLevel(level + 1)) {
+    level++;
+    // Safety cap to prevent infinite loops
+    if (level > 1000) break;
+  }
+  return level;
+}
+
+/**
+ * Get the thumbsUp threshold needed to reach the NEXT level after the current one.
+ * Useful for progress bar calculations.
+ */
+export function getNextLevelThreshold(currentLevel: number): number {
+  return getThumbsUpForLevel(currentLevel + 1);
 }
 
 export const RANK_GENERATION_RATES = {

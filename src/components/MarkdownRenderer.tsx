@@ -8,6 +8,9 @@ interface MarkdownRendererProps {
 
 const CodeBlock: React.FC<{ language: string; children: string }> = ({ language, children }) => {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const codeLines = children.split('\n');
+  const isLong = codeLines.length > 10;
 
   const handleCopy = async () => {
     try {
@@ -20,10 +23,20 @@ const CodeBlock: React.FC<{ language: string; children: string }> = ({ language,
   return (
     <div className="relative my-3 rounded-lg overflow-hidden bg-gray-950 border border-gray-800">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
-        <span className="text-xs text-gray-400 font-mono">{language || 'text'}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-400 font-mono">{language || 'text'}</span>
+          {isLong && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {expanded ? 'Collapse' : 'Expand'}
+            </button>
+          )}
+        </div>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors btn-press"
         >
           {copied ? (
             <>
@@ -38,8 +51,13 @@ const CodeBlock: React.FC<{ language: string; children: string }> = ({ language,
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto p-4">
-        <code className="text-sm text-gray-100 font-mono">{children}</code>
+      <pre className={`overflow-x-auto p-4 ${isLong && !expanded ? 'max-h-48' : ''}`}>
+        <code className="text-sm text-gray-100 font-mono">
+          {isLong && !expanded 
+            ? codeLines.slice(0, 10).join('\n') + '\n...'
+            : children
+          }
+        </code>
       </pre>
     </div>
   );
@@ -58,7 +76,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
 
             if (isBlock && !match) {
               return (
-                <pre className="overflow-x-auto p-4 bg-gray-950 rounded-lg my-3">
+                <pre className="overflow-x-auto p-4 bg-gray-950 rounded-lg my-3 border border-gray-800">
                   <code className="text-sm text-gray-100 font-mono">{String(children).replace(/\n$/, '')}</code>
                 </pre>
               );

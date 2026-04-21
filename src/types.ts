@@ -81,6 +81,16 @@ export interface Conversation {
   isPinned?: boolean;
   lastModelId?: string;
   favoriteModels?: string[];
+  modelIds?: string[];
+  memoryEnabled?: boolean;
+  agentSteps?: AgentStep[];
+}
+
+export interface AgentStep {
+  stepNumber: number;
+  toolCalls: ToolCall[];
+  toolResults: ChatMessage[];
+  timestamp: number;
 }
 
 export interface InputHistoryItem {
@@ -94,6 +104,46 @@ export interface QuickPrompt {
   name: string;
   content: string;
   createdAt: number;
+}
+
+// ==================== Loop Execution ====================
+
+export type LoopStatus = 'idle' | 'running' | 'paused' | 'completed' | 'cancelled' | 'error';
+
+export type StopConditionType = 'keyword' | 'threshold' | 'manual' | 'maxIterations';
+
+export type ExitStrategy = 'immediate' | 'afterToolResult' | 'onResponse';
+
+export interface LoopConfig {
+  maxIterations: number;
+  iterationTimeout: number; // milliseconds
+  stopCondition: StopConditionType;
+  stopKeyword?: string;
+  stopThreshold?: number;
+  autoContinueOnToolResult: boolean;
+  exitStrategy: ExitStrategy;
+}
+
+export interface LoopState {
+  id: string;
+  status: LoopStatus;
+  currentIteration: number;
+  maxIterations: number;
+  startTime: number;
+  lastIterationTime: number;
+  history: LoopHistoryEntry[];
+  error?: string;
+}
+
+export interface LoopHistoryEntry {
+  iteration: number;
+  timestamp: number;
+  input: string;
+  output: string;
+  toolCalls?: string[];
+  toolResults?: string[];
+  duration: number;
+  status: 'success' | 'error' | 'cancelled';
 }
 
 export interface AppSettings {
@@ -111,6 +161,19 @@ export interface AppSettings {
   showTimestamps: boolean;
   showTokenCount: boolean;
   showCostEstimate: boolean;
+  // Model selectors
+  summarizationModel: string;
+  skillGenerationModel: string;
+  // Chat persistence
+  autoSaveInterval: number;
+  offlineQueueEnabled: boolean;
+  conflictResolution: 'local' | 'remote' | 'newest' | 'manual';
+  lastSyncTimestamp: number | null;
+  // Loop execution
+  loopEnabled: boolean;
+  loopConfig: LoopConfig;
+  // Tool execution
+  toolSettings: ToolExecutionSettings;
 }
 
 export interface Skill {
@@ -127,6 +190,8 @@ export interface Skill {
   thumbsUp?: number;
   thumbsDown?: number;
   isDefault?: boolean;
+  keywords?: string[];
+  memoryTriggers?: string[];
 }
 
 export const DEFAULT_SKILLS: Skill[] = [
@@ -139,6 +204,8 @@ export const DEFAULT_SKILLS: Skill[] = [
     category: 'coding',
     builtIn: true,
     enabled: true,
+    keywords: ['code', 'programming', 'function', 'class', 'algorithm', 'debug', 'implement', 'syntax', 'bug', 'error', 'refactor', 'optimize', 'api', 'frontend', 'backend', 'web', 'react', 'python', 'javascript', 'typescript', 'sql', 'database'],
+    memoryTriggers: ['i am a', "i'm a", 'i work as', 'my stack', 'my tech', 'i use', 'i prefer', 'my code'],
   },
   {
     id: 'creative-writer',
@@ -149,6 +216,8 @@ export const DEFAULT_SKILLS: Skill[] = [
     category: 'writing',
     builtIn: true,
     enabled: true,
+    keywords: ['write', 'story', 'poem', 'poetry', 'creative', 'fiction', 'narrative', 'character', 'plot', 'novel', 'script', 'dialogue', 'verse', 'rhym', 'metaphor'],
+    memoryTriggers: ['i like', 'my favorite', 'i enjoy', 'i want'],
   },
   {
     id: 'research-analyst',
@@ -159,6 +228,8 @@ export const DEFAULT_SKILLS: Skill[] = [
     category: 'analysis',
     builtIn: true,
     enabled: true,
+    keywords: ['research', 'analyze', 'analysis', 'study', 'report', 'data', 'findings', 'summary', 'conclusion', 'evidence', 'source', 'cite', 'reference'],
+    memoryTriggers: ['i am', "i'm", 'my name is', 'i work', 'i study', 'research'],
   },
   {
     id: 'teacher',
@@ -169,6 +240,8 @@ export const DEFAULT_SKILLS: Skill[] = [
     category: 'analysis',
     builtIn: true,
     enabled: true,
+    keywords: ['explain', 'teach', 'learn', 'understand', 'concept', 'how does', 'what is', 'why does', 'tutorial', 'lesson', 'explain', 'help me understand'],
+    memoryTriggers: ['i am', "i'm", "i don't understand", 'can you explain', 'help me learn'],
   },
   {
     id: 'debate-partner',
@@ -179,8 +252,30 @@ export const DEFAULT_SKILLS: Skill[] = [
     category: 'analysis',
     builtIn: true,
     enabled: true,
+    keywords: ['debate', 'argument', 'disagree', 'counter', 'prove', '反驳', 'argue', 'pros', 'cons', 'discussion', 'opposing'],
+    memoryTriggers: ['i think', 'i believe', 'i feel', 'my opinion'],
   },
 ];
+
+// Default values used in DEFAULT_SETTINGS (not exported, must be defined first)
+const DEFAULT_LOOP_CONFIG: LoopConfig = {
+  maxIterations: 10,
+  iterationTimeout: 120000,
+  stopCondition: 'manual',
+  stopKeyword: '',
+  stopThreshold: 0,
+  autoContinueOnToolResult: true,
+  exitStrategy: 'afterToolResult',
+};
+
+const DEFAULT_TOOL_SETTINGS_VAL: ToolExecutionSettings = {
+  timeout: 60000,
+  maxRetries: 3,
+  retryBackoff: 1000,
+  maxConcurrent: 3,
+  streamResults: true,
+  promptPermission: true,
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
   temperature: 0.7,
@@ -197,6 +292,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showTimestamps: true,
   showTokenCount: false,
   showCostEstimate: true,
+  // Model selectors
+  summarizationModel: '',
+  skillGenerationModel: '',
+  // Chat persistence
+  autoSaveInterval: 30,
+  offlineQueueEnabled: true,
+  conflictResolution: 'newest',
+  lastSyncTimestamp: null,
+  // Loop execution
+  loopEnabled: false,
+  loopConfig: DEFAULT_LOOP_CONFIG,
+  // Tool execution
+  toolSettings: DEFAULT_TOOL_SETTINGS_VAL,
 };
 
 export const DEFAULT_PROVIDERS: Provider[] = [
@@ -267,3 +375,60 @@ export const DEFAULT_PROVIDERS: Provider[] = [
     requiresVault: true,
   },
 ];
+
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, { type: string; description?: string; enum?: string[] }>;
+      required?: string[];
+    };
+  };
+}
+
+export interface ToolSettings {
+  enabled: boolean;
+  requiresVault: boolean;
+  description: string;
+  category: 'filesystem' | 'web' | 'utility';
+  requiresApproval?: boolean; // Tools that need user confirmation before execution
+}
+
+export const TOOL_SETTINGS: Record<string, ToolSettings> = {
+  list_files: { enabled: true, requiresVault: true, description: "List files in directory", category: 'filesystem' },
+  read_file: { enabled: true, requiresVault: true, description: "Read file contents", category: 'filesystem' },
+  write_file: { enabled: true, requiresVault: true, description: "Write/create files", category: 'filesystem' },
+  edit_file: { enabled: true, requiresVault: true, description: "Edit file contents", category: 'filesystem' },
+  mkdir: { enabled: true, requiresVault: true, description: "Create directories", category: 'filesystem' },
+  delete_file: { enabled: true, requiresVault: true, description: "Delete files", category: 'filesystem' },
+  delete_directory: { enabled: true, requiresVault: true, description: "Delete empty directories", category: 'filesystem' },
+  search_in_file: { enabled: true, requiresVault: true, description: "Search within files", category: 'filesystem' },
+  get_file_info: { enabled: true, requiresVault: true, description: "Get file metadata", category: 'filesystem' },
+  web_search: { enabled: true, requiresVault: false, description: "Search the web", category: 'web' },
+  web_fetch: { enabled: true, requiresVault: false, description: "Fetch URL content", category: 'web' },
+  calculate: { enabled: true, requiresVault: false, description: "Math calculations", category: 'utility' },
+  codesearch: { enabled: true, requiresVault: false, description: "Search code using Exa Code API", category: 'web' },
+  bash: { enabled: true, requiresVault: false, description: "Execute bash command", category: 'utility', requiresApproval: true }
+};
+
+// Tool execution settings - defined before DEFAULT_SETTINGS
+export interface ToolExecutionSettings {
+  timeout: number; // milliseconds
+  maxRetries: number;
+  retryBackoff: number; // milliseconds base
+  maxConcurrent: number;
+  streamResults: boolean;
+  promptPermission: boolean;
+}
+
+export const DEFAULT_TOOL_SETTINGS: ToolExecutionSettings = {
+  timeout: 60000, // 60 seconds
+  maxRetries: 3,
+  retryBackoff: 1000, // 1 second base
+  maxConcurrent: 3,
+  streamResults: true,
+  promptPermission: true
+};

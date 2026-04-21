@@ -260,6 +260,17 @@ export const SkillForge: React.FC = () => {
   const [genLog, setGenLog] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<SkillRank | 'all'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  // Category definitions matching Skill types
+  const CATEGORIES = [
+    { id: 'all', label: 'All', icon: '📋' },
+    { id: 'coding', label: 'Coding', icon: '💻' },
+    { id: 'writing', label: 'Writing', icon: '✍️' },
+    { id: 'analysis', label: 'Analysis', icon: '🔬' },
+    { id: 'creative', label: 'Creative', icon: '🎨' },
+    { id: 'custom', label: 'Custom', icon: '⚙️' },
+  ];
   const [detailSkill, setDetailSkill] = useState<SlimeSkill | null>(null);
   const [selectedForMerge, setSelectedForMerge] = useState<string | null>(null);
   const [gluttonyMode, setGluttonyMode] = useState(false);
@@ -439,7 +450,12 @@ export const SkillForge: React.FC = () => {
     setMerging(false);
   }, [selectedForMerge, mergeTargets, skills]);
 
-  const filtered = skills.filter(s => filter === 'all' || s.rank === filter);
+  const filtered = skills.filter(s => {
+    const rankMatch = filter === 'all' || s.rank === filter;
+    const categoryMatch = categoryFilter === 'all' || 
+      (categoryFilter === 'custom' ? !s.builtIn : s.category === categoryFilter);
+    return rankMatch && categoryMatch;
+  });
 
   const rankCounts: Record<string, number> = { all: skills.length };
   skills.forEach(s => { rankCounts[s.rank] = (rankCounts[s.rank] ?? 0) + 1; });
@@ -586,6 +602,29 @@ export const SkillForge: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* Category filter */}
+      <div style={{ padding: '8px 16px', display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        {CATEGORIES.map(cat => {
+          const active = categoryFilter === cat.id;
+          return (
+            <button
+              key={cat.id}
+              onClick={() => setCategoryFilter(cat.id)}
+              style={{
+                padding: '3px 10px', borderRadius: 20, fontSize: 11,
+                fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize',
+                background: active ? 'rgba(99,179,237,0.2)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${active ? 'rgba(99,179,237,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                color: active ? '#90CDF4' : 'rgba(180,200,220,0.5)',
+                letterSpacing: '0.05em',
+              }}
+            >
+              {cat.icon} {cat.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Rank filter */}
       <div style={{ padding: '8px 16px', display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>

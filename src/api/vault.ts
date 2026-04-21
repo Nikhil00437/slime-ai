@@ -162,14 +162,40 @@ function formatDate(timestamp: number): string {
 }
 
 function conversationToMarkdown(conv: Conversation): string {
-  const lines: string[] = [
-    '---',
+  // Extract all unique model IDs from messages (only for assistant messages)
+  const modelIds = [...new Set(
+    conv.messages
+      .filter(m => m.role === 'assistant' && m.model)
+      .map(m => m.model)
+  )];
+  
+  const frontmatterLines = [
     `id: "${conv.id}"`,
     `title: "${conv.title}"`,
     `model: "${conv.modelId}"`,
+  ];
+  
+  if (modelIds.length > 0) {
+    frontmatterLines.push(`models: ${JSON.stringify(modelIds)}`);
+  }
+  
+  frontmatterLines.push(
     `provider: "${conv.provider}"`,
     `createdAt: ${conv.createdAt}`,
-    `updatedAt: ${conv.updatedAt}`,
+    `updatedAt: ${conv.updatedAt}`
+  );
+  
+  if (conv.memoryEnabled !== undefined) {
+    frontmatterLines.push(`memoryEnabled: ${conv.memoryEnabled}`);
+  }
+  
+  if (conv.agentSteps && conv.agentSteps.length > 0) {
+    frontmatterLines.push(`agentSteps: ${JSON.stringify(conv.agentSteps)}`);
+  }
+  
+  const lines: string[] = [
+    '---',
+    ...frontmatterLines,
     '---',
     '',
   ];
@@ -206,7 +232,7 @@ function markdownToConversation(
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
     if (!frontmatterMatch) return null;
 
-    const frontmatter: Record<string, string | number> = {};
+    const frontmatter: Record<string, string | number | string[]> = {};
     const fmLines = frontmatterMatch[1].split('\n');
     for (const line of fmLines) {
       const colonIdx = line.indexOf(':');
@@ -216,6 +242,14 @@ function markdownToConversation(
 
       if (value.startsWith('"') && value.endsWith('"')) {
         value = value.slice(1, -1);
+      } else if (value.startsWith('[')) {
+        // Handle JSON array for models field
+        try {
+          frontmatter[key] = JSON.parse(value);
+          continue;
+        } catch {
+          // Not valid JSON, treat as string
+        }
       } else if (!isNaN(Number(value))) {
         frontmatter[key] = Number(value);
         continue;
@@ -228,14 +262,27 @@ function markdownToConversation(
     const messages: ChatMessage[] = [];
 
     const sections = body.split(/^##\s+/m).filter(Boolean);
+    const modelArray = Array.isArray(frontmatter.models) ? frontmatter.models as string[] : [];
+    let modelIndex = 0;
+    
     for (const section of sections) {
       const match = section.match(/^(User|Assistant)\s*\(([^)]+)\)\n([\s\S]*)$/);
       if (match) {
+        const role = match[1].toLowerCase() as 'user' | 'assistant';
+        
+        // If assistant message and we have a models array, use the next model
+        // Otherwise use the default model
+        let messageModel = String(frontmatter.model || '');
+        if (role === 'assistant' && modelArray.length > 0 && modelIndex < modelArray.length) {
+          messageModel = modelArray[modelIndex] || messageModel;
+          modelIndex = (modelIndex + 1) % modelArray.length; // Cycle through models
+        }
+        
         messages.push({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          role: match[1].toLowerCase() as 'user' | 'assistant',
+          role,
           content: match[3].trim(),
-          model: String(frontmatter.model || ''),
+          model: messageModel,
           provider: (frontmatter.provider as any) || 'ollama',
           timestamp: new Date(match[2]).getTime(),
         });
@@ -250,6 +297,9 @@ function markdownToConversation(
       updatedAt: Number(frontmatter.updatedAt) || Date.now(),
       modelId: String(frontmatter.model || ''),
       provider: (frontmatter.provider as any) || 'ollama',
+      modelIds: Array.isArray(frontmatter.models) ? frontmatter.models : undefined,
+      memoryEnabled: String(frontmatter.memoryEnabled) === 'true',
+      agentSteps: Array.isArray(frontmatter.agentSteps) ? (frontmatter.agentSteps as any[]) : undefined,
     };
   } catch {
     return null;
@@ -562,7 +612,7 @@ export async function saveSkillsToVault(skills: any[]): Promise<boolean> {
     
     const gluttony = skills.find(s => s.id === 'gluttony-skill');
     if (gluttony) {
-      const gluttonyFile = await skillsFolder.getFileHandle('gluttony.json', { create: true });
+      const gluttonyFile = await skillsFolder.getFileHandle('gluttony.skill', { create: true });
       const writable = await gluttonyFile.createWritable();
       await writable.write(JSON.stringify(gluttony, null, 2));
       await writable.close();
@@ -570,7 +620,7 @@ export async function saveSkillsToVault(skills: any[]): Promise<boolean> {
 
     const customSkills = skills.filter(s => s.id !== 'gluttony-skill');
     for (const skill of customSkills) {
-      const fileName = `${skill.id}.json`;
+      const fileName = `${skill.id}.skill`;
       const fileHandle = await skillsFolder.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(skill, null, 2));
@@ -593,7 +643,7 @@ export async function loadSkillsFromVault(): Promise<any[]> {
     const skills: any[] = [];
 
     for await (const entry of (skillsFolder as any).values()) {
-      if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+      if (entry.kind === 'file' && (entry.name.endsWith('.skill') || entry.name.endsWith('.json'))) {
         try {
           const file = await entry.getFile();
           const content = await file.text();

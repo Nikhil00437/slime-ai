@@ -1,9 +1,12 @@
-﻿import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ModelInfo, DEFAULT_SKILLS, Skill } from '../types';
 import { useAppContext } from '../store/AppContext';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AttachmentInput, Attachment, getCapabilityFilters, filterModelsByCapabilities } from './AttachmentInput';
-import { isModelCompatibleWithSkill, filterModelsBySkill, getIncompatibleModels } from '../api/modelSkillCompatibility';
 import { calculateMessageCost, formatCost, formatTokenCount } from '../api/pricing';
+import { SkillQuickAccessBar, getPinnedSkillIds } from './SkillQuickAccessBar';
+import { SkillSuggestionBanner, getSuggestionReason } from './SkillSuggestionBanner';
+import { detectSkillFromQuery, getAttachmentTypeFromList, CONFIDENCE_THRESHOLD } from '../utils/skillDetection';
 import {
   Send,
   Square,
@@ -21,7 +24,6 @@ import {
   Copy,
   Check,
   Search,
-  ArrowDown,
   RotateCcw,
   Edit3,
   Clock,
@@ -30,14 +32,14 @@ import {
   Copy as CopyIcon,
   GitBranch,
   Pin,
-  Star,
   X,
   Library,
   ChevronUp,
-  MessageSquare,
   Trash2,
   Pencil,
+  Terminal,
 } from 'lucide-react';
+import { LoopControlPanel } from './LoopControlPanel';
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -61,9 +63,7 @@ export const ChatPanel: React.FC = () => {
     setIsSidebarOpen,
     providers,
     setActiveModel,
-    skills,
     setSettings,
-    activeSkill,
     isExecutingTool,
     activeTools,
     createConversation,
@@ -72,14 +72,10 @@ export const ChatPanel: React.FC = () => {
     editLastMessage,
     retryLastMessage,
     copyMessageToClipboard,
-    searchConversation,
     inputHistory,
     inputHistoryIndex,
-    setInputHistoryIndex,
     addToInputHistory,
     activeConversationId,
-    conversations,
-    setActiveConversation,
     deleteConversation,
     clearConversationMessages,
     togglePinConversation,
@@ -87,18 +83,24 @@ export const ChatPanel: React.FC = () => {
     renameConversation,
     branchConversation,
     exportConversation,
+    loopState,
+    loopPaused,
+    startLoop,
+    pauseLoop,
+    resumeLoop,
+    cancelLoop,
   } = useAppContext();
 
   const [input, setInput] = useState('');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [_isAtBottom, _setIsAtBottom] = useState(true);
   const [showSearch, setShowSearch] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
-  const [showMessageMenu, setShowMessageMenu] = useState<string | null>(null);
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [_showMessageMenu, _setShowMessageMenu] = useState<string | null>(null);
+  const [_copiedMessageId, _setCopiedMessageId] = useState<string | null>(null);
   const [showConvMenu, setShowConvMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
@@ -107,11 +109,27 @@ export const ChatPanel: React.FC = () => {
   const [showTemperature, setShowTemperature] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const [agentStepsCollapsed, setAgentStepsCollapsed] = useState(() => {
+    const stored = localStorage.getItem('mm_agent_steps_collapsed');
+    return stored ? JSON.parse(stored) : true;
+  });
+  const [showLoopPanel, setShowLoopPanel] = useState(false);
+
+  // Skill Quick Access state
+  const [pinnedSkillIds] = useState<string[]>(() => getPinnedSkillIds());
+  const [activeSkillForBar, setActiveSkillForBar] = useState<string | null>(null);
+  const [suggestedSkill, setSuggestedSkill] = useState<Skill | null>(null);
+  const [suggestionConfidence, setSuggestionConfidence] = useState(0);
+  const [suggestionReason, setSuggestionReason] = useState('');
+
+  // Persist agent steps collapse state
+  useEffect(() => {
+    localStorage.setItem('mm_agent_steps_collapsed', JSON.stringify(agentStepsCollapsed));
+  }, [agentStepsCollapsed]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const prevMessagesLength = useRef(0);
   const draftTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load draft on mount and conversation change
@@ -142,6 +160,32 @@ export const ChatPanel: React.FC = () => {
     };
   }, [input, activeConversationId]);
 
+  // Skill auto-detection and suggestion when input changes
+  useEffect(() => {
+    if (!input.trim() || input.length < 5) {
+      if (suggestedSkill) {
+        setSuggestedSkill(null);
+      }
+      return;
+    }
+
+    const attachmentType = getAttachmentTypeFromList(attachments as unknown as Array<{ type: string }>);
+    const result = detectSkillFromQuery(input, DEFAULT_SKILLS as Skill[], attachmentType);
+
+    // If confidence is below auto-threshold but above suggestion threshold, show banner
+    if (result.confidence >= 0.5 && result.confidence < CONFIDENCE_THRESHOLD && result.skill) {
+      if (!suggestedSkill || suggestedSkill.id !== result.skill.id) {
+        setSuggestedSkill(result.skill);
+        setSuggestionConfidence(result.confidence);
+        setSuggestionReason(getSuggestionReason(result.matchedKeywords, result.matchedTriggers, attachmentType));
+      }
+    } else if (result.confidence >= CONFIDENCE_THRESHOLD) {
+      // Auto-activate - update the bar
+      setActiveSkillForBar(result.skill?.id || null);
+      setSuggestedSkill(null);
+    }
+  }, [input, attachments]);
+
   const handleSubmit = async () => {
     const trimmed = input.trim();
     if (!trimmed && attachments.length === 0 || isLoading || !activeModel) return;
@@ -163,7 +207,7 @@ export const ChatPanel: React.FC = () => {
     addToInputHistory(trimmed);
     
     setInput('');
-    setInputHistoryIndex(0); // Reset index on new message
+    // Reset history navigation on new message
     const currentAttachments = [...attachments];
     setAttachments([]);
     await sendMessage(trimmed, currentAttachments);
@@ -174,7 +218,6 @@ export const ChatPanel: React.FC = () => {
     if (e.key === 'ArrowUp' && inputHistory.length > 0 && !showModelDropdown) {
       e.preventDefault();
       const newIndex = inputHistoryIndex < inputHistory.length - 1 ? inputHistoryIndex + 1 : inputHistoryIndex;
-      setInputHistoryIndex(newIndex);
       setInput(inputHistory[newIndex] || '');
       return;
     }
@@ -183,7 +226,6 @@ export const ChatPanel: React.FC = () => {
     if (e.key === 'ArrowDown' && inputHistoryIndex > 0) {
       e.preventDefault();
       const newIndex = inputHistoryIndex - 1;
-      setInputHistoryIndex(newIndex);
       setInput(inputHistory[newIndex] || '');
       return;
     }
@@ -201,7 +243,7 @@ export const ChatPanel: React.FC = () => {
       setShowSearch(false);
       setShowQuickPrompts(false);
       setEditingMessageId(null);
-      setShowMessageMenu(null);
+      _setShowMessageMenu(null);
       return;
     }
     
@@ -250,21 +292,6 @@ export const ChatPanel: React.FC = () => {
   const capableModels = hasCapFilter ? filterModelsByCapabilities(allModels, capFilters) : allModels;
   const capableModelIds = new Set(capableModels.map(m => m.id));
 
-  // Filter by skill compatibility
-  const skillCompatibleModels = activeSkill 
-    ? filterModelsBySkill(capableModels, activeSkill)
-    : capableModels;
-  const skillCompatibleModelIds = new Set(skillCompatibleModels.map(m => m.id));
-
-  // Check if currently selected model is incompatible
-  const currentCompatibility = activeModel && activeSkill
-    ? isModelCompatibleWithSkill(activeModel, activeSkill)
-    : { compatible: true, reason: '' };
-  const showIncompatibleWarning = activeModel && !currentCompatibility.compatible;
-
-  // Get incompatible models for dropdown info (kept for future use)
-  void getIncompatibleModels;
-
   return (
     <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
       {/* Chat Header - Sticky at top */}
@@ -281,7 +308,7 @@ export const ChatPanel: React.FC = () => {
         <div className="relative flex-1 min-w-0">
           <button
             onClick={() => setShowModelDropdown(!showModelDropdown)}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded-lg transition-colors w-full min-w-0"
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded-lg transition-colors w-full min-w-0 hover-lift"
           >
             {currentProvider && (
               <span className={providerColors[currentProvider.id]}>
@@ -291,6 +318,28 @@ export const ChatPanel: React.FC = () => {
             <span className="text-sm text-white font-medium truncate">
               {activeModel?.name || 'Select a model...'}
             </span>
+            {/* Show capability badges for active model */}
+            {activeModel && (
+              <div className="flex items-center gap-1 shrink-0">
+                {activeModel.capabilities?.image && (
+                  <span className="text-[10px] bg-blue-500/20 text-blue-300 px-1 py-0.5 rounded" title="Supports images">🖼️</span>
+                )}
+                {activeModel.capabilities?.audio && (
+                  <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1 py-0.5 rounded" title="Supports audio">🔊</span>
+                )}
+                {activeModel.capabilities?.video && (
+                  <span className="text-[10px] bg-red-500/20 text-red-300 px-1 py-0.5 rounded" title="Supports video">🎬</span>
+                )}
+                {activeModel.capabilities?.fileUpload && (
+                  <span className="text-[10px] bg-green-500/20 text-green-300 px-1 py-0.5 rounded" title="Supports files">📁</span>
+                )}
+              </div>
+            )}
+            {(activeModel?.provider === 'ollama' || activeModel?.provider === 'lmstudio') && (
+              <span className="text-yellow-500 shrink-0" aria-label="Local models may not support tools">
+                <AlertTriangle size={14} />
+              </span>
+            )}
             <ChevronDown
               size={14}
               className={`text-gray-400 shrink-0 transition-transform ${
@@ -306,18 +355,27 @@ export const ChatPanel: React.FC = () => {
                 className="fixed inset-0 z-40"
                 onClick={() => setShowModelDropdown(false)}
               />
-              <div className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50">
-                {/* Recent Models Section */}
-                {settings.recentModels.length > 0 && (
+              <div className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 dropdown-animate">
+                {/* Search inside dropdown */}
+                <div className="p-2 border-b border-gray-800">
+                  <input
+                    type="text"
+                    placeholder="Filter models..."
+                    className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+                
+                {/* Favorites Section */}
+                {settings.favoriteModels.length > 0 && (
                   <div className="border-b border-gray-800">
                     <div className="px-3 py-2 flex items-center gap-2">
-                      <Clock size={12} className="text-blue-400" />
-                      <span className="text-xs font-semibold text-blue-400">Recent</span>
+                      <span className="text-yellow-400">★</span>
+                      <span className="text-xs font-semibold text-yellow-400">Favorites</span>
                     </div>
-                    {settings.recentModels.slice(0, 5).map(recentModelId => {
-                      const model = allModels.find(m => m.id === recentModelId);
+                    {settings.favoriteModels.slice(0, 3).map(favModelId => {
+                      const model = allModels.find(m => m.id === favModelId);
                       if (!model) return null;
-                      const compat = activeSkill ? isModelCompatibleWithSkill(model, activeSkill) : { compatible: true, reason: '' };
                       return (
                         <button
                           key={model.id}
@@ -328,45 +386,62 @@ export const ChatPanel: React.FC = () => {
                           className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
                             activeModel?.id === model.id
                               ? 'bg-blue-600/20 text-blue-400'
-                              : compat.compatible
-                                ? 'text-gray-300 hover:bg-gray-800'
-                                : 'text-red-400/70 hover:bg-red-900/20'
+                              : 'text-gray-300 hover:bg-gray-800'
                           }`}
                         >
+                          <span className="text-yellow-400 text-xs">★</span>
                           {model.name}
-                          {!compat.compatible && <AlertTriangle size={12} className="shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                
+                {/* Recent Models Section */}
+                {settings.recentModels.length > 0 && (
+                  <div className="border-b border-gray-800">
+                    <div className="px-3 py-2 flex items-center gap-2">
+                      <Clock size={12} className="text-blue-400" />
+                      <span className="text-xs font-semibold text-blue-400">Recent</span>
+                    </div>
+                    {settings.recentModels.slice(0, 5).map(recentModelId => {
+                      const model = allModels.find(m => m.id === recentModelId);
+                      if (!model) return null;
+                      return (
+                        <button
+                          key={model.id}
+                          onClick={() => {
+                            setActiveModel(model);
+                            setShowModelDropdown(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
+                            activeModel?.id === model.id
+                              ? 'bg-blue-600/20 text-blue-400'
+                              : 'text-gray-300 hover:bg-gray-800'
+                          }`}
+                        >
+                          <Clock size={10} className="text-gray-500" />
+                          {model.name}
                         </button>
                       );
                     })}
                   </div>
                 )}
                 {hasCapFilter && (
-                  <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
+                  <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-blue-400 font-medium">
-                      Showing models that support:
+                      Filtering by:
                     </span>
-                    {capFilters.image && <span className="text-xs bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">Image</span>}
-                    {capFilters.audio && <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">Audio</span>}
-                    {capFilters.video && <span className="text-xs bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">Video</span>}
-                    {capFilters.fileUpload && <span className="text-xs bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded">Files</span>}
-                  </div>
-                )}
-                {activeSkill && (
-                  <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2">
-                    <Sparkles size={12} className="text-purple-400" />
-                    <span className="text-xs text-purple-400 font-medium">
-                      Skill: {activeSkill.name}
-                    </span>
+                    {capFilters.image && <span className="text-xs bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">🖼️ Image</span>}
+                    {capFilters.audio && <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">🔊 Audio</span>}
+                    {capFilters.video && <span className="text-xs bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">🎬 Video</span>}
+                    {capFilters.fileUpload && <span className="text-xs bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded">📁 Files</span>}
                   </div>
                 )}
                 {providers.map((provider) => {
                   let providerModels = hasCapFilter
                     ? provider.models.filter(m => capableModelIds.has(m.id))
                     : provider.models;
-                  // Also filter by skill compatibility
-                  if (activeSkill) {
-                    providerModels = providerModels.filter(m => skillCompatibleModelIds.has(m.id));
-                  }
                   if (providerModels.length === 0) return null;
                   return (
                     <div key={provider.id} className="py-1">
@@ -377,29 +452,30 @@ export const ChatPanel: React.FC = () => {
                         <span className="text-xs font-semibold text-gray-400">
                           {provider.name}
                         </span>
+                        <span className="text-xs text-gray-600">({providerModels.length})</span>
                       </div>
-                      {providerModels.map((model) => {
-                        const compat = activeSkill ? isModelCompatibleWithSkill(model, activeSkill) : { compatible: true, reason: '' };
-                        return (
-                          <button
-                            key={model.id}
-                            onClick={() => {
-                              setActiveModel(model);
-                              setShowModelDropdown(false);
-                            }}
-                            className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
-                              activeModel?.id === model.id
-                                ? 'bg-blue-600/20 text-blue-400'
-                                : compat.compatible
-                                  ? 'text-gray-300 hover:bg-gray-800'
-                                  : 'text-red-400/70 hover:bg-red-900/20'
-                            }`}
-                          >
-                            {model.name}
-                            {!compat.compatible && <AlertTriangle size={12} className="shrink-0" />}
-                          </button>
-                        );
-                      })}
+                      {providerModels.map((model) => (
+                        <button
+                          key={model.id}
+                          onClick={() => {
+                            setActiveModel(model);
+                            setShowModelDropdown(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
+                            activeModel?.id === model.id
+                              ? 'bg-blue-600/20 text-blue-400'
+                              : 'text-gray-300 hover:bg-gray-800'
+                          }`}
+                        >
+                          {model.name}
+                          {/* Show capability badges */}
+                          <div className="flex items-center gap-0.5 ml-auto shrink-0">
+                            {model.capabilities?.image && <span className="text-[8px]" title="Vision">🖼️</span>}
+                            {model.capabilities?.audio && <span className="text-[8px]" title="Audio">🔊</span>}
+                            {model.capabilities?.fileUpload && <span className="text-[8px]" title="Files">📁</span>}
+                          </div>
+                        </button>
+                      ))}
                     </div>
                   );
                 })}
@@ -487,28 +563,13 @@ export const ChatPanel: React.FC = () => {
                   <span className="text-xs font-semibold text-gray-300">System Prompt</span>
                 </div>
                 <p className="text-xs text-gray-400 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                  {activeSkill ? activeSkill.systemPrompt : settings.systemPrompt}
+                  {settings.systemPrompt}
                 </p>
-                {activeSkill && (
-                  <div className="mt-2 pt-2 border-t border-gray-700">
-                    <span className="text-xs text-purple-400">Active Skill: {activeSkill.name}</span>
-                  </div>
-                )}
               </div>
             </>
           )}
         </div>
       </div>
-
-      {/* Incompatible Model Warning */}
-      {showIncompatibleWarning && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-red-900/30 border-b border-red-800/50">
-          <AlertTriangle size={14} className="text-red-400 shrink-0" />
-          <span className="text-xs text-red-300">
-            {currentCompatibility.reason}. Consider switching to a compatible model.
-          </span>
-        </div>
-      )}
 
       {/* Toolbar with search and conversation actions */}
       {activeConversation && activeConversation.messages.length > 0 && (
@@ -610,6 +671,21 @@ export const ChatPanel: React.FC = () => {
               <span className="text-xs font-mono">$</span>
             </button>
             
+            {/* Memory toggle */}
+            <button
+              onClick={() => {
+                // Memory is per-conversation, toggled via conversation update
+              }}
+              className={`p-1.5 rounded transition-colors ${
+                activeConversation?.memoryEnabled 
+                  ? 'text-purple-400 bg-purple-400/10' 
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              }`}
+              title={activeConversation?.memoryEnabled ? 'Memory enabled for this conversation' : 'Enable memory for this conversation'}
+            >
+              <Brain size={14} />
+            </button>
+            
             {/* Conversation menu */}
             <div className="relative">
               <button
@@ -701,7 +777,7 @@ export const ChatPanel: React.FC = () => {
           <div className="sticky top-4 z-10 p-2 inset-x-0 flex justify-center pointer-events-none">
             <div className="flex items-center gap-2 px-4 py-2 bg-black/40 border border-white/10 backdrop-blur-md rounded-full text-xs text-blue-300 shadow-xl pointer-events-auto">
               <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-              <span>Agent executing: {activeTools.join(', ')}...</span>
+              <span>Agent Step {activeConversation?.agentSteps?.length || 1}: {activeTools.join(', ')}...</span>
             </div>
           </div>
         )}
@@ -719,30 +795,47 @@ export const ChatPanel: React.FC = () => {
 
             {allModels.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg w-full">
-                {allModels.slice(0, 4).map((model) => {
-                  const prov = providers.find((p) => p.id === model.provider);
-                  return (
-                    <button
-                      key={model.id}
-                      onClick={() => {
-                        setActiveModel(model);
-                      }}
-                      className="flex items-center gap-3 p-3 bg-gray-800/50 hover:bg-gray-800 border border-gray-700 hover:border-gray-600 rounded-xl text-left transition-colors"
-                    >
-                      <span className={providerColors[model.provider]}>
-                        {providerIcons[model.provider]}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-sm text-white truncate">
-                          {model.name.length > 28
-                            ? model.name.slice(0, 28) + '...'
-                            : model.name}
+                {(() => {
+                  const recentModelIds = settings.recentModels.slice(0, 4);
+                  const recentModels = recentModelIds
+                    .map(id => allModels.find(m => m.id === id))
+                    .filter((m): m is ModelInfo => m !== undefined);
+                  
+                  const usedIds = new Set(recentModels.map(m => m.id));
+                  const otherModels = allModels.filter(m => !usedIds.has(m.id));
+                  const suggestedModels = [...recentModels, ...otherModels].slice(0, 4);
+                  
+                  return suggestedModels.map((model) => {
+                    const prov = providers.find((p) => p.id === model.provider);
+                    const isRecent = settings.recentModels.includes(model.id);
+                    return (
+                      <button
+                        key={model.id}
+                        onClick={() => {
+                          setActiveModel(model);
+                        }}
+                        className="flex items-center gap-3 p-3 bg-gray-800/50 hover:bg-gray-800 border border-gray-700 hover:border-gray-600 rounded-xl text-left transition-colors"
+                      >
+                        <span className={providerColors[model.provider]}>
+                          {providerIcons[model.provider]}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-sm text-white truncate">
+                            {model.name.length > 28
+                              ? model.name.slice(0, 28) + '...'
+                              : model.name}
+                          </div>
+                          <div className="text-xs text-gray-500 flex items-center gap-1">
+                            {prov?.name}
+                            {isRecent && (
+                              <span className="text-blue-400">• Recent</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-500">{prov?.name}</div>
-                      </div>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  });
+                })()}
               </div>
             )}
 
@@ -855,7 +948,7 @@ export const ChatPanel: React.FC = () => {
                                 className="p-1 text-gray-500 hover:text-white transition-colors"
                                 title="Copy response"
                               >
-                                {copiedMessageId === message.id ? (
+                                {_copiedMessageId === message.id ? (
                                   <Check size={12} className="text-green-400" />
                                 ) : (
                                   <Copy size={12} />
@@ -953,64 +1046,111 @@ export const ChatPanel: React.FC = () => {
             })}
           </div>
         )}
+        
+        {/* Collapsible Agent Steps Section */}
+        {activeConversation?.agentSteps && activeConversation.agentSteps.length > 0 && (
+          <div className="px-4 py-2 border-t border-gray-800">
+            <button
+              onClick={() => setAgentStepsCollapsed(!agentStepsCollapsed)}
+              className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-300"
+            >
+              {agentStepsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              <span>Agent Steps ({activeConversation.agentSteps.length})</span>
+            </button>
+            {!agentStepsCollapsed && (
+              <div className="mt-2 space-y-2">
+                {activeConversation.agentSteps.map((step, idx) => (
+                  <div key={idx} className="bg-black/30 border border-white/5 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-blue-400 mb-2">
+                      Step {step.stepNumber}
+                    </div>
+                    <div className="text-xs text-gray-400 mb-1">
+                      Tools: {step.toolCalls.map(tc => tc.function.name).join(', ')}
+                    </div>
+                    {step.toolResults.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                          Results ({step.toolResults.length})
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          {step.toolResults.map((result, rIdx) => (
+                            <div key={rIdx} className="text-xs text-gray-600 font-mono bg-black/40 p-2 rounded max-h-24 overflow-y-auto">
+                              {result.content.slice(0, 200)}
+                              {result.content.length > 200 && '...'}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Input Area - Fixed at bottom */}
       <div className="sticky bottom-0 z-10 border-t border-gray-800 p-4 bg-gray-900">
         <div className="max-w-3xl mx-auto">
+          {/* Skill Suggestion Banner - shown when skill detected but below auto-threshold */}
+          {suggestedSkill && (
+            <SkillSuggestionBanner
+              skill={suggestedSkill}
+              confidence={suggestionConfidence}
+              reason={suggestionReason}
+              onAccept={() => {
+                setActiveSkillForBar(suggestedSkill.id);
+                setSuggestedSkill(null);
+              }}
+              onDismiss={() => {
+                setSuggestedSkill(null);
+              }}
+            />
+          )}
+
+          {/* Skill Quick Access Bar */}
+          <SkillQuickAccessBar
+            skills={DEFAULT_SKILLS as Skill[]}
+            activeSkillId={activeSkillForBar}
+            onSkillToggle={(skillId) => {
+              setActiveSkillForBar(skillId);
+              setSuggestedSkill(null);
+            }}
+            pinnedSkillIds={pinnedSkillIds}
+          />
+
           {attachments.length > 0 && (
-            <div className="mb-2">
+            <div className="mb-2 animate-fade-in-down">
               <AttachmentInput
                 attachments={attachments}
                 onAttachmentsChange={setAttachments}
               />
             </div>
           )}
-          {/* Skill Picker */}
-          {skills.filter(s => s.enabled ?? true).length > 0 && (
-            <div className="mb-2 flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-600 mr-1">Skills:</span>
-              <button
-                onClick={() => setSettings(s => ({ ...s, activeSkillId: null }))}
-                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                  !activeSkill
-                    ? 'bg-gray-700 border-gray-600 text-white'
-                    : 'border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600'
-                }`}
-              >
-                None
-              </button>
-              {skills.filter(s => s.enabled ?? true).map(skill => (
-                <button
-                  key={skill.id}
-                  title={skill.description}
-                  onClick={() =>
-                    setSettings(s => ({
-                      ...s,
-                      activeSkillId: s.activeSkillId === skill.id ? null : skill.id,
-                    }))
-                  }
-                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
-                    activeSkill?.id === skill.id
-                      ? 'bg-blue-600/30 border-blue-500 text-blue-300'
-                      : 'border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600'
-                  }`}
-                >
-                  <span>{skill.icon}</span>
-                  <span>{skill.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Enhanced Input Container with Glow Effect */}
           <div 
-            className="flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 focus-within:border-blue-500 transition-colors"
+            className={`flex items-end gap-2 bg-gray-800 border rounded-xl px-3 py-2 transition-all duration-300 ${
+              attachments.length > 0 
+                ? 'border-purple-500/50 shadow-lg shadow-purple-500/20' 
+                : 'border-gray-700 focus-within:border-blue-500 focus-within:shadow-lg focus-within:shadow-blue-500/20'
+            }`}
             onDragOver={(e) => {
               e.preventDefault();
               e.stopPropagation();
             }}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.currentTarget.classList.add('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.currentTarget.classList.remove('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
+            }}
             onDrop={async (e) => {
               e.preventDefault();
               e.stopPropagation();
+              e.currentTarget.classList.remove('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
               
               const files = e.dataTransfer.files;
               if (!files || files.length === 0) return;
@@ -1047,14 +1187,14 @@ export const ChatPanel: React.FC = () => {
           >
             <div className="flex items-center gap-1 pb-1">
               <button
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors btn-press"
                 title="Add image"
                 onClick={() => document.getElementById('image-input')?.click()}
               >
                 <Image size={16} />
               </button>
               <button
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors btn-press"
                 title="Add file"
                 onClick={() => document.getElementById('file-input')?.click()}
               >
@@ -1112,11 +1252,44 @@ export const ChatPanel: React.FC = () => {
             {input.length > 200 && (
               <button
                 onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
-                className={`p-1.5 rounded transition-colors ${showMarkdownPreview ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                className={`p-1.5 rounded transition-colors btn-press ${showMarkdownPreview ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
                 title={showMarkdownPreview ? 'Edit' : 'Preview'}
               >
                 <span className="text-xs">{showMarkdownPreview ? '✏️' : '👁️'}</span>
               </button>
+            )}
+            {/* Character count for long inputs */}
+            {input.length > 500 && (
+              <span className={`text-xs font-mono ${input.length > 4000 ? 'text-red-400' : 'text-gray-500'}`}>
+                {input.length.toLocaleString()}
+              </span>
+            )}
+            {/* Loop execution toggle */}
+            {settings.loopEnabled && (
+              <button
+                onClick={() => setShowLoopPanel(!showLoopPanel)}
+                className={`p-1.5 rounded transition-colors btn-press ${
+                  showLoopPanel || loopState
+                    ? 'text-green-400 bg-green-400/10'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+                title={showLoopPanel ? 'Hide loop controls' : 'Loop controls'}
+              >
+                <Terminal size={14} />
+              </button>
+            )}
+            {/* Loop status indicator */}
+            {loopState && loopState.status === 'running' && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-green-500/10 rounded text-xs text-green-400">
+                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                {loopState.currentIteration}/{loopState.maxIterations}
+              </div>
+            )}
+            {loopState && loopState.status === 'paused' && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-yellow-500/10 rounded text-xs text-yellow-400">
+                <span className="w-2 h-2 bg-yellow-400 rounded-full" />
+                Paused
+              </div>
             )}
             {showMarkdownPreview ? (
               <div className="flex-1 min-h-[60px] max-h-[200px] overflow-y-auto bg-gray-900 rounded-lg px-3 py-2 text-gray-200 text-sm whitespace-pre-wrap">
@@ -1144,7 +1317,7 @@ export const ChatPanel: React.FC = () => {
             {isLoading ? (
               <button
                 onClick={stopStreaming}
-                className="p-2 bg-red-500 hover:bg-red-400 text-white rounded-lg transition-colors shrink-0"
+                className="p-2 bg-red-500 hover:bg-red-400 text-white rounded-lg transition-colors shrink-0 btn-press"
                 title="Stop generating"
               >
                 <Square size={16} />
@@ -1153,20 +1326,49 @@ export const ChatPanel: React.FC = () => {
               <button
                 onClick={handleSubmit}
                 disabled={!activeModel || (!input.trim() && attachments.length === 0)}
-                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0"
+                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0 btn-press disabled:btn-press:scale-100"
                 title="Send message (Ctrl+Enter)"
               >
                 <Send size={16} />
               </button>
             )}
           </div>
-          {/* Keyboard shortcuts hint */}
+          {/* Enhanced Keyboard shortcuts hint */}
           <div className="flex items-center justify-between mt-2 text-xs text-gray-600">
-            <span>↑↓ History • Ctrl+Enter Send • Esc Close</span>
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd>
+                <span className="text-gray-500 ml-1">History</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">↵</kbd>
+                <span className="text-gray-500 ml-1">Send</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <kbd className="kbd">Esc</kbd>
+                <span className="text-gray-500 ml-1">Close</span>
+              </span>
+            </div>
             {inputHistory.length > 0 && (
-              <span>{inputHistory.length} saved</span>
+              <span className="text-gray-500">{inputHistory.length} saved</span>
             )}
           </div>
+
+          {/* Loop Control Panel */}
+          {showLoopPanel && settings.loopEnabled && (
+            <div className="mt-3 pt-3 border-t border-gray-700">
+              <LoopControlPanel
+                isCompact={false}
+                onStartLoop={(prompt, config) => {
+                  startLoop(prompt, config);
+                  setShowLoopPanel(false);
+                }}
+                onPauseLoop={pauseLoop}
+                onResumeLoop={resumeLoop}
+                onCancelLoop={cancelLoop}
+              />
+            </div>
+          )}
         </div>
       </div>
 

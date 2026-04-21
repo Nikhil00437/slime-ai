@@ -3,7 +3,9 @@ import { AppProvider, useAppContext } from './store/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { SkillForge } from './slime/SkillForge';
-import { MessageSquare, FlaskConical } from 'lucide-react';
+import { CommandPalette, useCommandPalette } from './components/CommandPalette';
+import { HelpPalette, useHelpPalette } from './components/HelpPalette';
+import { MessageSquare, FlaskConical, Command, HelpCircle } from 'lucide-react';
 
 type Tab = 'chat' | 'forge';
 
@@ -11,6 +13,8 @@ function AppContent() {
   const { error, setError } = useAppContext();
   const [showError, setShowError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('chat');
+  const { isOpen: isCommandPaletteOpen, setIsOpen: setCommandPaletteOpen } = useCommandPalette();
+  const { isOpen: isHelpOpen, setIsOpen: setHelpOpen } = useHelpPalette();
 
   useEffect(() => {
     if (error) {
@@ -40,6 +44,26 @@ function AppContent() {
         }}>
           <TabBtn active={tab === 'chat'} onClick={() => setTab('chat')} icon={<MessageSquare size={14} />} label="Chat" />
           <TabBtn active={tab === 'forge'} onClick={() => setTab('forge')} icon={<FlaskConical size={14} />} label="Skill Forge" accent />
+          
+          {/* Command Palette Trigger */}
+          <button
+            onClick={() => setCommandPaletteOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 hover:text-gray-400 hover:bg-gray-800 rounded transition-colors"
+            title="Command Palette (Ctrl+K)"
+          >
+            <Command size={12} />
+            <kbd className="kbd">Ctrl+K</kbd>
+          </button>
+
+          {/* Help Palette Trigger */}
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 hover:text-gray-400 hover:bg-gray-800 rounded transition-colors"
+            title="Help (Ctrl+H)"
+          >
+            <HelpCircle size={12} />
+            <kbd className="kbd">Ctrl+H</kbd>
+          </button>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
@@ -47,10 +71,16 @@ function AppContent() {
         </div>
       </div>
 
+      {/* Command Palette */}
+      <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+
+      {/* Help Palette */}
+      <HelpPalette isOpen={isHelpOpen} onClose={() => setHelpOpen(false)} />
+
       {/* Error Toast */}
       {showError && (
         <div className="fixed top-4 right-4 z-50 max-w-sm">
-          <div className="bg-red-500/90 backdrop-blur-sm text-white px-4 py-3 rounded-xl shadow-lg flex items-start gap-3">
+          <div className="bg-red-500/90 backdrop-blur-sm text-white px-4 py-3 rounded-xl shadow-lg flex items-start gap-3 animate-slide-in-right">
             <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
@@ -60,7 +90,7 @@ function AppContent() {
               <p className="text-sm font-medium">Error</p>
               <p className="text-xs text-red-100/80 mt-0.5">{showError}</p>
             </div>
-            <button onClick={() => setShowError(null)} className="text-red-200 hover:text-white shrink-0">×</button>
+            <button onClick={() => setShowError(null)} className="text-red-200 hover:text-white shrink-0 btn-press">×</button>
           </div>
         </div>
       )}
