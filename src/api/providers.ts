@@ -1,4 +1,13 @@
 import { ProviderType, ModelInfo, ChatMessage } from '../types';
+// ✅ Day 3: Retry imports
+import { 
+  getRequestTimeout, 
+  getRetryConfig, 
+  isRetryableError, 
+  calculateRetryDelay,
+  withTimeout,
+  withRetry 
+} from './retry';
 
 function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');

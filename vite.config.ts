@@ -13,4 +13,38 @@ export default defineConfig({
   base: '/',
   plugins: [react(), tailwindcss(), viteSingleFile()],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  // Exclude playwright from browser bundle - it requires Node.js
+  build: {
+    rollupOptions: {
+      external: [
+        'playwright',
+        'playwright-core',
+        'chromium-bidi',
+        'ws',
+        'http',
+        'https',
+        'net',
+        'tls',
+        'fs',
+        'path',
+        'os',
+        'child_process',
+        'readline',
+        'stream',
+        'zlib',
+        'util',
+        'events',
+        'dns',
+        'constants',
+        'assert',
+        'url',
+        'buffer',
+        'process',
+        'tty',
+      ],
+    },
+  },
+  optimizeDeps: {
+    exclude: ['playwright', 'playwright-core'],
+  },
 });

@@ -296,11 +296,11 @@ export const ChatPanel: React.FC = () => {
     <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
       {/* Chat Header - Sticky at top */}
       <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
-        <button
-          onClick={() => setIsSidebarOpen(true)}
-          className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-          title="Toggle sidebar"
-        >
+<button
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors focus-ring-a11y"
+            title="Toggle sidebar"
+          >
           <Menu size={20} />
         </button>
 
@@ -308,7 +308,7 @@ export const ChatPanel: React.FC = () => {
         <div className="relative flex-1 min-w-0">
           <button
             onClick={() => setShowModelDropdown(!showModelDropdown)}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded-lg transition-colors w-full min-w-0 hover-lift"
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded-lg transition-colors w-full min-w-0 hover-lift focus-ring-a11y"
           >
             {currentProvider && (
               <span className={providerColors[currentProvider.id]}>
@@ -771,7 +771,7 @@ export const ChatPanel: React.FC = () => {
       )}
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 relative">
+      <div className="flex-1 overflow-y-auto min-h-0 relative scroll-smooth">
         {/* Active Top Status */}
         {isExecutingTool && activeTools.length > 0 && (
           <div className="sticky top-4 z-10 p-2 inset-x-0 flex justify-center pointer-events-none">
@@ -856,8 +856,8 @@ export const ChatPanel: React.FC = () => {
               return (
                 <div
                   key={message.id}
-                  className={`flex gap-4 px-4 py-4 group relative ${
-                    message.role === 'user' ? '' : 'bg-gray-900'
+                  className={`flex gap-4 px-4 py-4 group relative animate-message-bubble ${
+                    message.role === 'user' ? 'chat-bubble-user' : message.role === 'tool' ? 'chat-bubble-tool' : 'chat-bubble-assistant'
                   } ${
                     index > 0 && activeConversation.messages[index - 1].role === message.role
                       ? 'py-1'
@@ -923,7 +923,7 @@ export const ChatPanel: React.FC = () => {
                           )}
                           {message.isStreaming && (
                             <span className="flex items-center gap-1 text-xs text-blue-400">
-                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse streaming-glow" />
                               typing...
                             </span>
                           )}
@@ -945,13 +945,13 @@ export const ChatPanel: React.FC = () => {
                             {message.role === 'assistant' && (
                               <button
                                 onClick={() => copyMessageToClipboard(message.content)}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
+                                className="p-1 text-gray-500 hover:text-white transition-colors copy-button focus-ring-a11y"
                                 title="Copy response"
                               >
                                 {_copiedMessageId === message.id ? (
-                                  <Check size={12} className="text-green-400" />
+                                  <Check size={12} className="copy-check copy-pulse" />
                                 ) : (
-                                  <Copy size={12} />
+                                  <Copy size={12} className="copy-icon" />
                                 )}
                               </button>
                             )}
@@ -1280,8 +1280,10 @@ export const ChatPanel: React.FC = () => {
             )}
             {/* Loop status indicator */}
             {loopState && loopState.status === 'running' && (
-              <div className="flex items-center gap-1 px-2 py-1 bg-green-500/10 rounded text-xs text-green-400">
-                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              <div className="flex items-center gap-1 px-2 py-1 bg-green-500/10 rounded text-xs text-green-400 streaming-indicator">
+                <span className="streaming-dot" />
+                <span className="streaming-dot" />
+                <span className="streaming-dot" />
                 {loopState.currentIteration}/{loopState.maxIterations}
               </div>
             )}
@@ -1326,7 +1328,7 @@ export const ChatPanel: React.FC = () => {
               <button
                 onClick={handleSubmit}
                 disabled={!activeModel || (!input.trim() && attachments.length === 0)}
-                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0 btn-press disabled:btn-press:scale-100"
+                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0 btn-press ripple ripple-blue disabled:btn-press:scale-100 focus-ring-a11y"
                 title="Send message (Ctrl+Enter)"
               >
                 <Send size={16} />

@@ -280,7 +280,14 @@ const DEFAULT_TOOL_SETTINGS_VAL: ToolExecutionSettings = {
 export const DEFAULT_SETTINGS: AppSettings = {
   temperature: 0.7,
   maxTokens: 4096,
-  systemPrompt: 'You are a helpful assistant.',
+  systemPrompt: `You are a helpful assistant.
+
+## Tool Use Rules
+- Use search tools for factual/current queries about news, prices, weather, or real-time information.
+- If search tool returns {error} or empty results: respond "Search unavailable. Answering from internal knowledge."
+- NEVER invent URLs, titles, or snippets when tools fail.
+- Clearly state uncertainty when information may be outdated.
+- Cite only results provided by search tools.`,
   streamResponses: true,
   sidebarCollapsed: false,
   activeSkillId: null,
@@ -411,7 +418,18 @@ export const TOOL_SETTINGS: Record<string, ToolSettings> = {
   web_fetch: { enabled: true, requiresVault: false, description: "Fetch URL content", category: 'web' },
   calculate: { enabled: true, requiresVault: false, description: "Math calculations", category: 'utility' },
   codesearch: { enabled: true, requiresVault: false, description: "Search code using Exa Code API", category: 'web' },
-  bash: { enabled: true, requiresVault: false, description: "Execute bash command", category: 'utility', requiresApproval: true }
+  bash: { enabled: true, requiresVault: false, description: "Execute bash command", category: 'utility', requiresApproval: true },
+  // Browser automation tools
+  browser_navigate: { enabled: true, requiresVault: false, description: "Navigate to a URL", category: 'web' },
+  browser_scrape: { enabled: true, requiresVault: false, description: "Scrape page content", category: 'web' },
+  browser_screenshot: { enabled: true, requiresVault: false, description: "Take a screenshot", category: 'web' },
+  browser_act: { enabled: true, requiresVault: false, description: "Perform browser action (click, fill, scroll)", category: 'web', requiresApproval: true },
+  browser_get_cookies: { enabled: true, requiresVault: true, description: "Get browser cookies", category: 'web' },
+  browser_set_cookies: { enabled: true, requiresVault: true, description: "Set browser cookies", category: 'web', requiresApproval: true },
+  browser_close: { enabled: true, requiresVault: false, description: "Close browser session", category: 'web' },
+  browser_save_cookies: { enabled: true, requiresVault: true, description: "Save cookies to vault", category: 'web' },
+  browser_load_cookies: { enabled: true, requiresVault: true, description: "Load cookies from vault", category: 'web' },
+  browser_history: { enabled: true, requiresVault: false, description: "Get browser history", category: 'web' },
 };
 
 // Tool execution settings - defined before DEFAULT_SETTINGS

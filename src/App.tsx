@@ -6,19 +6,35 @@ import { SkillForge } from './slime/SkillForge';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { HelpPalette, useHelpPalette } from './components/HelpPalette';
 import { MessageSquare, FlaskConical, Command, HelpCircle } from 'lucide-react';
+import { ToastProvider } from './components/Toast';
+import { initFavicon, setFaviconStatus } from './utils/favicon';
 
 type Tab = 'chat' | 'forge';
 
 function AppContent() {
-  const { error, setError } = useAppContext();
+  const { error, setError, isLoading } = useAppContext();
   const [showError, setShowError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('chat');
   const { isOpen: isCommandPaletteOpen, setIsOpen: setCommandPaletteOpen } = useCommandPalette();
   const { isOpen: isHelpOpen, setIsOpen: setHelpOpen } = useHelpPalette();
 
+  // Initialize favicon and update based on loading state
+  useEffect(() => {
+    initFavicon();
+  }, []);
+
+  useEffect(() => {
+    if (isLoading) {
+      setFaviconStatus('streaming');
+    } else {
+      setFaviconStatus('idle');
+    }
+  }, [isLoading]);
+
   useEffect(() => {
     if (error) {
       setShowError(error);
+      setFaviconStatus('error');
       const timer = setTimeout(() => {
         setShowError(null);
         setError(null);
@@ -132,7 +148,9 @@ function TabBtn({ active, onClick, icon, label, accent }: {
 export default function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AppProvider>
   );
 }

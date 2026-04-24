@@ -43,6 +43,7 @@ export const SkillCard: React.FC<SkillCardProps> = ({
   return (
     <div
       onClick={onSelect}
+      className={onSelect ? 'cursor-pointer' : ''}
       style={{
         position: 'relative',
         background: meta.bg,
@@ -72,6 +73,7 @@ export const SkillCard: React.FC<SkillCardProps> = ({
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         {/* Icon */}
         <div
+          className="skill-icon"
           style={{
             width: compact ? 32 : 38,
             height: compact ? 32 : 38,

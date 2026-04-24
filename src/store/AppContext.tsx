@@ -26,6 +26,30 @@ import {
   ToolDefinition,
   ToolCallDelta,
 } from '../api/providers';
+// ✅ Day 1: Validation imports
+import { checkRateLimit, getRateLimit } from '../api/rateLimiter';
+import { 
+  validateInputLength, 
+  validateApiKey, 
+  checkSubmitAllowed,
+  sanitizeInput 
+} from '../api/validation';
+// ✅ Day 2: Sanitization imports
+import { 
+  sanitizeComplete,
+  checkXss,
+  checkPromptInjection,
+  sanitizeSkillInput,
+  sanitizePromptVariable,
+  sanitizeForDisplay 
+} from '../api/sanitization';
+// ✅ Day 3: Retry imports
+import { 
+  getRequestTimeout,
+  getRetryConfig, 
+  isRetryableError,
+  calculateRetryDelay 
+} from '../api/retry';
 import { searchMemory, extractMemoryKeywords } from '../api/memory';
 import {
   selectVaultFolder,
@@ -58,6 +82,7 @@ import {
   detectSkillFromQuery,
   getAttachmentTypeFromList,
 } from '../utils/skillDetection';
+import { searchAndSummarize, isSearchSuccess, webSearch } from '../api/searchTool';
 
 interface VaultState {
   vaultConnected: boolean;
@@ -303,11 +328,11 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     type: "function",
     function: {
       name: "web_search",
-      description: "Search the web for information. Returns title, snippet, and URL for each result.",
+      description: "Search the web for current information. Returns results or {error}. If error: \"Search unavailable. Answering from internal knowledge.\" NEVER invent URLs.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query" },
+          query: { type: "string", description: "Search query (max 200 chars)" },
           num_results: { type: "string", description: "Number of results (default 5)" }
         },
         required: ["query"]
@@ -318,12 +343,12 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
     type: "function",
     function: {
       name: "web_fetch",
-      description: "Fetch and extract text content from a URL.",
+      description: "Fetch content from a URL. Returns {content} or {error}. If error: respond \"Content unavailable.\" NEVER make up page content.",
       parameters: {
         type: "object",
         properties: {
-          url: { type: "string", description: "URL to fetch" },
-          max_length: { type: "string", description: "Maximum characters to extract (default 5000)" }
+          url: { type: "string", description: "Valid HTTP/HTTPS URL" },
+          max_length: { type: "string", description: "Max characters to extract (default 5000)" }
         },
         required: ["url"]
       }
@@ -472,102 +497,138 @@ function safeMathEval(expression: string): number | string {
     return 'Invalid expression';
   }
 }
-
-// Clean Whoogle-style web search 
 async function searchWeb(query: string, numResults = 5): Promise<any> {
-  const results: Array<{title: string; snippet: string; url: string}> = [];
-  
-  // DuckDuckGo HTML (most reliable)
-  try {
-    const res = await fetch(
-      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&b=${numResults}`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (res.ok) {
-      const html = await res.text();
-      const matches = html.matchAll(/href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/g);
-      for (const m of matches) {
-        const url = m[1];
-        const title = m[2].trim();
-        if (url && !url.includes('duckduckgo') && title.length > 3) {
-          results.push({ title, snippet: '', url });
-        }
-      }
-    }
-  } catch (e) { console.warn('DDG error:', e); }
 
-  // Fallback to Startpage
-  if (results.length === 0) {
-    try {
-      const res = await fetch(
-        `https://www.startpage.com/do/search?query=${encodeURIComponent(query)}`,
-        { signal: AbortSignal.timeout(8000) }
-      );
-      if (res.ok) {
-        const html = await res.text();
-        const matches = html.matchAll(/href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/g);
-        for (const m of matches) {
-          const url = m[1];
-          const title = m[2].trim();
-          if (url && !url.includes('startpage') && title.length > 3 && results.length < numResults) {
-            results.push({ title, snippet: '', url });
-          }
-        }
-      }
-    } catch (e) { console.warn('Startpage error:', e); }
-  }
+const outcome = await webSearch(query);
 
-  if (results.length === 0) {
-    return { results: [{ title: 'No results', snippet: `No results for "${query}"`, url: '' }] };
-  }
+if (!isSearchSuccess(outcome) || outcome.results.length === 0) {
+  // Don't inject the error object — just let the model answer from its own knowledge
+  // or show a soft user-facing message
+  return { role: 'tool', content: '⚠️ Web search returned no results. Answering from model knowledge.' }
+} else {
+  const context = outcome.results
+    .map(r => `[${r.url}]: ${r.snippet}`)
+    .join('\n\n');
+  // inject context into the model prompt
+}}
 
-  // Dedupe and return
-  const seen = new Set<string>();
-  const filtered = results.filter(r => {
-    try {
-      const h = new URL(r.url).hostname;
-      if (seen.has(h)) return false;
-      seen.add(h);
-      return true;
-    } catch { return true; }
-  });
+// // Use robust search tool from searchTool.ts
+// async function searchWeb(query: string, numResults = 5): Promise<any> {
+//   try {
+//     const result = await webSearch(query);
+    
+//     if ('error' in result) {
+//       return {
+//         error: result.error,
+//         errorCode: result.errorCode,
+//         provider: result.provider,
+//         results: []
+//       };
+//     }
+    
+//     return {
+//       results: result.results?.slice(0, numResults) || [],
+//       count: result.results?.length || 0,
+//       provider: result.provider,
+//       query: result.query,
+//     };
+//   } catch (e: any) {
+//     return { error: e.message || 'search_failed', results: [] };
+//   }
+// }
 
-  return { results: filtered.slice(0, numResults), count: filtered.length };
-}
-
-// Web fetch 
+// Web fetch with proper timeout and error handling
 async function fetchUrl(url: string, maxLength = 5000): Promise<any> {
+  const TOOL_TIMEOUT = 15000; // 15 seconds to handle DNS + TLS + response
+  
+  // Validate URL
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { error: 'Invalid protocol. Only HTTP/HTTPS supported.' };
+    }
+  } catch {
+    return { error: 'Invalid URL format' };
+  }
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TOOL_TIMEOUT);
+    
+    const res = await fetch(url, { 
+      signal: controller.signal, 
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SlimeAI/1.0)' } 
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      return { error: `HTTP_${res.status}`, statusCode: res.status };
+    }
+    
     const text = await res.text();
     const dom = new DOMParser().parseFromString(text.slice(0, maxLength), 'text/html');
-    dom.querySelectorAll('script,style').forEach(e => e.remove());
-    return { content: dom.body?.textContent?.replace(/\s+/g, ' ').trim() || text.slice(0, maxLength), url, length: text.length };
-  } catch (e: any) { return { error: e.message }; }
+    dom.querySelectorAll('script,style,nav,header,footer').forEach(e => e.remove());
+    
+    return { 
+      content: dom.body?.textContent?.replace(/\s+/g, ' ').trim() || text.slice(0, maxLength), 
+      url, 
+      length: text.length,
+      title: dom.querySelector('title')?.textContent?.trim(),
+    };
+  } catch (e: any) { 
+    if (e.name === 'AbortError' || e.message?.includes('aborted')) {
+      return { error: 'TIMEOUT_15s', errorCode: 'fetch_timeout', url };
+    }
+    return { error: e.message || 'fetch_failed', errorCode: 'network_error' }; 
+  }
 }
 
-// Code search using Exa API
+// Code search using Exa API with proper timeout and error handling
 async function codeSearchExa(query: string, tokens = 5000): Promise<any> {
+  const TOOL_TIMEOUT = 15000; // 15 seconds
+  const apiKey = localStorage.getItem('exa_api_key') || '';
+  
+  if (!apiKey) {
+    return { error: 'EXA_API_KEY_MISSING', errorCode: 'no_api_key', results: [] };
+  }
+  
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TOOL_TIMEOUT);
+    
     const res = await fetch('https://api.exa.ai/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('exa_api_key') || ''}`
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         query,
-        numTokens: tokens,
-        type: 'code'
+        numTokens: Math.min(tokens, 5000),
+        type: 'code',
+        text_max_lines: 100,
       }),
-      signal: AbortSignal.timeout(30000)
+      signal: controller.signal,
     });
-    if (!res.ok) return { error: `Exa API error: ${res.status}` };
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      return { error: `HTTP_${res.status}`, errorCode: 'api_error', statusCode: res.status, results: [] };
+    }
+    
     const data = await res.json();
-    return { results: data.results || [], count: data.results?.length || 0 };
+    return { 
+      results: data.results || [], 
+      count: data.results?.length || 0,
+      provider: 'exa',
+    };
   } catch (e: any) {
-    return { error: e.message };
+    if (e.name === 'AbortError' || e.message?.includes('aborted')) {
+      return { error: 'TIMEOUT_15s', errorCode: 'timeout', results: [] };
+    }
+    return { error: e.message || 'code_search_failed', errorCode: 'network_error', results: [] };
   }
 }
 
@@ -669,20 +730,149 @@ export async function executeToolsParallel(
 
 // Tool execution handler
 export const handleToolExecution = async (name: string, args: Record<string, any>): Promise<any> => {
+  // API-first: Use web APIs as primary (works in browser)
   if (name === 'web_search') {
     return searchWeb(args.query, parseInt(args.num_results) || 5);
   }
+
   if (name === 'web_fetch') {
+    // Try proxy first if configured
+    const { automateProxy } = await import('../api/browserProxy');
+    const proxyResult = await automateProxy(args.url, { 
+      maxLength: parseInt(args.max_length) || 10000 
+    });
+    
+    if (proxyResult.success && proxyResult.data?.text) {
+      return {
+        content: proxyResult.data.text,
+        url: proxyResult.data.url || args.url,
+        title: proxyResult.data.title,
+        fallback: true,
+      };
+    }
+    
+    // Fallback to original fetch
     return fetchUrl(args.url, parseInt(args.max_length) || 5000);
   }
+
   if (name === 'calculate') {
     return { result: safeMathEval(args.expression) };
   }
   if (name === 'codesearch') {
     return codeSearchExa(args.query, parseInt(args.tokens) || 5000);
   }
+
   if (name === 'bash') {
     return executeBash(args.command, parseInt(args.timeout) * 1000 || 30000);
+  }
+
+  // Helper to wrap browser tools with 10-second timeout
+  const TOOL_TIMEOUT = 10000;
+  async function withToolTimeout<T>(fn: () => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TOOL_TIMEOUT);
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        throw new Error(`Browser tool timed out after ${TOOL_TIMEOUT / 1000} seconds. Please answer based on your knowledge.`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  // Browser tool handlers (don't require vault) - wrapped with 10-second timeout
+  if (name === 'browser_navigate') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing', hint: 'Browser automation requires Node.js environment' };
+    }
+    return withToolTimeout(() => browser.navigate(args.url, args.session));
+  }
+  if (name === 'browser_scrape') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing', hint: 'Browser automation requires Node.js environment' };
+    }
+    return withToolTimeout(() => browser.scrape(args.selector, args.query, args.session));
+  }
+  if (name === 'browser_screenshot') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing', hint: 'Browser automation requires Node.js environment' };
+    }
+    return withToolTimeout(() => browser.screenshot(args.full_page || false, args.session));
+  }
+  if (name === 'browser_act') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing', hint: 'Browser automation requires Node.js environment' };
+    }
+    // Parse action from JSON string if provided, or build from individual params
+    let action: any;
+    if (args.action_json) {
+      action = typeof args.action_json === 'string' ? JSON.parse(args.action_json) : args.action_json;
+    } else {
+      action = { type: args.type, ...args };
+    }
+    return withToolTimeout(() => browser.act(action, args.session));
+  }
+  if (name === 'browser_get_cookies') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    return browser.getCookies(args.session);
+  }
+  if (name === 'browser_set_cookies') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    const cookies = typeof args.cookies === 'string' ? JSON.parse(args.cookies) : args.cookies;
+    return browser.setCookies(cookies, args.session);
+  }
+  if (name === 'browser_close') {
+    const browser = await import('../api/browser');
+    return browser.close(args.session);
+  }
+  if (name === 'browser_history') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    return browser.getHistory(args.session);
+  }
+  if (name === 'browser_back') {
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    return withToolTimeout(() => browser.back(args.session));
+  }
+  if (name === 'browser_save_cookies') {
+    // Get cookies first then save to vault
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    const browserVault = await import('../api/browserVault');
+    const cookiesResult = await browser.getCookies(args.session);
+    if (!cookiesResult.success) return cookiesResult;
+    return browserVault.saveCookies(args.session || 'default', cookiesResult.data?.cookies || []);
+  }
+  if (name === 'browser_load_cookies') {
+    // Load from vault then set in browser
+    const browserVault = await import('../api/browserVault');
+    const browser = await import('../api/browser');
+    if (!browser.isPlaywrightAvailable()) {
+      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
+    }
+    const loadResult = await browserVault.loadCookies(args.session || 'default');
+    if (!loadResult.success) return loadResult;
+    return browser.setCookies(loadResult.cookies || [], args.session);
   }
 
   const handle = await restoreVaultHandle();
@@ -1010,6 +1200,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [refreshVaultState]);
 
+  // Start browser session cleanup on mount
+  useEffect(() => {
+    import('../api/browserSession').then(({ startSessionCleanup }) => {
+      startSessionCleanup(5 * 60 * 1000, 60 * 1000); // 5 min idle, check every 1 min
+    });
+    
+    // Cleanup on unmount
+    return () => {
+      import('../api/browserSession').then(({ closeBrowser, stopSessionCleanup }) => {
+        stopSessionCleanup();
+        closeBrowser().catch(console.error);
+      });
+    };
+  }, []);
+
   useEffect(() => {
     if (conversations.length > 0 && isVaultConnected()) {
       const timeoutId = setTimeout(() => {
@@ -1221,10 +1426,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const sendMessage = useCallback(
     async (content: string, attachments?: Attachment[]) => {
+      // ✅ Day 1: Validation checks
       if (!activeModel || !activeConversationId) return;
+      
+      // Double-submit prevention
+      const submitCheck = checkSubmitAllowed();
+      if (!submitCheck.allowed) {
+        setError(submitCheck.error || 'Submit not allowed');
+        return;
+      }
+      
+      // Input length validation
+      const lengthCheck = validateInputLength(content, activeModel.provider);
+      if (!lengthCheck.valid) {
+        setError(lengthCheck.error || 'Input too long');
+        return;
+      }
+      
+      // API key validation for cloud providers
+      const activeProvider = providers.find((p) => p.id === activeModel.provider);
+      if (activeProvider?.apiKey) {
+        const keyCheck = validateApiKey(activeProvider.apiKey, activeModel.provider);
+        if (!keyCheck.valid) {
+          setError(keyCheck.error || 'Invalid API key');
+          return;
+        }
+      }
+      
+      // Rate limiting check
+      const rateCheck = checkRateLimit(activeModel.provider);
+      if (!rateCheck.allowed) {
+        setError(`Rate limit exceeded. Retry in ${Math.ceil((rateCheck.retryAfter || 0)/1000)}s`);
+        return;
+      }
+      
+      // ✅ Day 2: Prompt injection check
+      const injectionCheck = checkPromptInjection(content);
+      if (injectionCheck.blocked) {
+        setError('Potential prompt injection detected. Your input was modified.');
+      }
+      
+      // ✅ Day 2: XSS check on input
+      const xssCheck = checkXss(content);
+      if (!xssCheck.safe) {
+        setError('Potentially unsafe content detected. Please revise.');
+        return;
+      }
+      
       abortRef.current = false;
 
-      let messageContent = content;
+      // ✅ Day 2: Sanitize user input for skill prompts
+      let messageContent = sanitizeSkillInput(sanitizeInput(content));
       const messageAttachments = attachments 
         ? attachments.map(a => ({
             id: a.id,
@@ -1263,8 +1515,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         )
       );
 
-      const provider = providers.find((p) => p.id === activeModel.provider);
-      if (!provider) {
+      const currentProvider = providers.find((p) => p.id === activeModel.provider);
+      if (!currentProvider) {
         setError('Provider not found');
         return;
       }
@@ -1353,16 +1605,16 @@ Return a JSON array of ONLY new facts to add. If no new facts, return empty arra
 Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
         try {
-          const provider = providers.find(p => p.id === activeModel.provider);
-          if (!provider?.apiKey) {
+          const memProvider = providers.find(p => p.id === activeModel.provider);
+          if (!memProvider?.apiKey) {
             console.log('[Memory] No API key for provider');
             return;
           }
           
           // Use the appropriate API call based on provider
           let res;
-          if (provider.id === 'openai' || provider.id === 'openrouter') {
-            res = await fetch(`${provider.baseUrl}/chat/completions`, {
+          if (memProvider.id === 'openai' || memProvider.id === 'openrouter') {
+            res = await fetch(`${memProvider.baseUrl}/chat/completions`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -1376,12 +1628,12 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                 temperature: 0.3,
               }),
             });
-          } else if (provider.id === 'anthropic') {
-            res = await fetch(`${provider.baseUrl}/messages`, {
+          } else if (memProvider.id === 'anthropic') {
+            res = await fetch(`${memProvider.baseUrl}/messages`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': provider.apiKey,
+                'x-api-key': memProvider.apiKey,
                 'anthropic-version': '2023-06-01',
               },
               body: JSON.stringify({
@@ -1391,8 +1643,8 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                 temperature: 0.3,
               }),
             });
-          } else if (provider.id === 'gemini') {
-            res = await fetch(`${provider.baseUrl}/models/${activeModel.id}:generateContent?key=${provider.apiKey}`, {
+          } else if (memProvider.id === 'gemini') {
+            res = await fetch(`${memProvider.baseUrl}/models/${activeModel.id}:generateContent?key=${memProvider.apiKey}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1401,7 +1653,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
               }),
             });
           } else {
-            console.log('[Memory] Unsupported provider for memory extraction:', provider.id);
+            console.log('[Memory] Unsupported provider for memory extraction:', memProvider.id);
             return;
           }
           
@@ -1414,9 +1666,9 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
           let content = '';
           
           // Parse response based on provider
-          if (provider.id === 'anthropic') {
+          if (memProvider.id === 'anthropic') {
             content = data.content?.[0]?.text || '';
-          } else if (provider.id === 'gemini') {
+          } else if (memProvider.id === 'gemini') {
             content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
           } else {
             content = data.choices?.[0]?.message?.content || '';
@@ -1471,7 +1723,17 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
       // Add memory recall context if available
       if (memoryRecallContext) {
-        effectiveSystemPrompt += memoryRecallContext;
+        // ✅ Day 2: Sanitize dynamic memory before adding to prompt
+        const safeMemory = sanitizePromptVariable(memoryRecallContext);
+        effectiveSystemPrompt += safeMemory;
+      }
+
+      // ✅ Day 2: Sanitize skill response variables
+      if (matchedSkill) {
+        const skillPrompt = (matchedSkill as unknown as { systemPrompt?: string }).systemPrompt;
+        if (skillPrompt) {
+          effectiveSystemPrompt = sanitizeForDisplay(skillPrompt);
+        }
       }
 
       // Filter tools by enabled settings
@@ -1524,16 +1786,21 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         // Accumulate native tool call deltas during streaming
         const accumulatedToolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
 
-        try {
-          await streamChatCompletion(
+        // ✅ Day 3: Retry with exponential backoff
+          const retryConfig = getRetryConfig(activeModel.provider);
+          let lastError: string = '';
+          
+          for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+            try {
+              await streamChatCompletion(
             activeModel.provider,
-            provider.baseUrl,
+            currentProvider.baseUrl,
             activeModel.id,
             currentMessages,
             effectiveSystemPrompt,
             settings.temperature,
             settings.maxTokens,
-            provider.apiKey,
+            currentProvider.apiKey,
             {
               onChunk: (text: string) => {
                 if (abortRef.current) return;
@@ -1676,17 +1943,36 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                 }
               },
               onError: (err: string) => {
-                setError(err);
-                setIsLoading(false);
+                lastError = err;
               },
             },
             imageAttachments,
             nativeTools
           );
+          // Success - break retry loop
+          break;
         } catch (err: any) {
-          setError(err.message);
+          // ✅ Day 3: Check if retryable
+          lastError = err.message || String(err);
+          const isRetryable = isRetryableError(lastError, retryConfig);
+          
+          if (attempt < retryConfig.maxRetries && isRetryable) {
+            const delay = calculateRetryDelay(retryConfig, attempt);
+            setError(`Retrying (${attempt + 1}/${retryConfig.maxRetries}) after ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          
+          // Non-retryable or max retries - show error
+          setError(lastError);
           setIsLoading(false);
         }
+      }
+      
+      if (lastError && !lastError.includes('Retrying')) {
+        setError(lastError);
+        setIsLoading(false);
+      }
       };
 
       await runCompletionLoop(initialContextMessages);

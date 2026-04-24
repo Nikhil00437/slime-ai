@@ -1015,6 +1015,15 @@ checked={(settings.toolSettings && settings.toolSettings.promptPermission) !== u
               <WebToolItem toolName="web_search" />
               <WebToolItem toolName="web_fetch" />
               <WebToolItem toolName="codesearch" />
+              <div className="text-xs font-semibold text-gray-500 uppercase mt-2 mb-1">Browser</div>
+              <WebToolItem toolName="browser_navigate" />
+              <WebToolItem toolName="browser_scrape" />
+              <WebToolItem toolName="browser_screenshot" />
+              <WebToolItem toolName="browser_act" />
+              <WebToolItem toolName="browser_get_cookies" />
+              <WebToolItem toolName="browser_set_cookies" />
+              <WebToolItem toolName="browser_save_cookies" />
+              <WebToolItem toolName="browser_load_cookies" />
             </div>
             
             {/* Category: Utility */}
