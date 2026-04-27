@@ -91,15 +91,58 @@ export function saveChainRules(rules: SkillChainRule[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rules));
 }
 
+// Recursion guard state
+const chainDepthMap = new Map<string, number>();
+const MAX_CHAIN_DEPTH = 3;
+const CHAIN_WINDOW_MS = 30000; // 30 seconds
+
+/**
+ * Check recursion depth for a conversation
+ */
+function checkRecursionDepth(conversationId: string): boolean {
+  const now = Date.now();
+  const depth = chainDepthMap.get(conversationId) || 0;
+  return depth < MAX_CHAIN_DEPTH;
+}
+
+/**
+ * Increment chain depth
+ */
+function incrementChainDepth(conversationId: string): void {
+  const depth = chainDepthMap.get(conversationId) || 0;
+  chainDepthMap.set(conversationId, depth + 1);
+  // Auto-reset after window
+  setTimeout(() => {
+    const current = chainDepthMap.get(conversationId) || 0;
+    if (current > 0) {
+      chainDepthMap.set(conversationId, current - 1);
+    }
+  }, CHAIN_WINDOW_MS);
+}
+
+/**
+ * Reset chain depth for a conversation
+ */
+export function resetChainDepth(conversationId: string): void {
+  chainDepthMap.delete(conversationId);
+}
+
 /**
  * Check if a skill chain should trigger
  */
 export function checkSkillChain(
   currentSkillId: string | null,
   query: string,
-  skills: Skill[]
+  skills: Skill[],
+  conversationId?: string
 ): { skill: Skill | null; reason: string } | null {
   if (!currentSkillId) return null;
+
+  // Recursion guard
+  if (conversationId && !checkRecursionDepth(conversationId)) {
+    console.warn('[SkillChain] Recursion depth limit reached for conversation:', conversationId);
+    return null;
+  }
 
   const activeRules = chainRules.filter(r => r.enabled && r.triggerSkillId === currentSkillId);
 
@@ -128,6 +171,10 @@ export function checkSkillChain(
       if (rule.confidence >= 0.7) {
         const targetSkill = skills.find(s => s.id === rule.targetSkillId && s.enabled);
         if (targetSkill) {
+          // Increment recursion depth if conversation ID provided
+          if (conversationId) {
+            incrementChainDepth(conversationId);
+          }
           return {
             skill: targetSkill,
             reason: `Chain: "${rule.name}" triggered`,

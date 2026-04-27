@@ -21,7 +21,11 @@ export function canGenerateUltimate(modelId: string, provider: string): boolean 
 
 export function rollRank(modelId: string, provider: string): SkillRank {
   const canUltimate = canGenerateUltimate(modelId, provider);
+  const isLocal = provider === 'ollama' || provider === 'lmstudio';
   const r = Math.random();
+
+  // Terminal rank: 0.0000001% chance, only from local models
+  if (isLocal && r < RANK_GENERATION_RATES.terminal) return 'terminal';
 
   if (canUltimate && r < 0.001) return 'ultimate';
 
@@ -47,6 +51,10 @@ export function buildSkillGenerationPrompt(description: string, rolledRank: Skil
     ultimate: `Generate a pinnacle skill — perfect, complete, and unreproducible by lesser models. 
       It represents the absolute ceiling of what this concept can achieve. No further improvement 
       is conceivable. It must be genuinely revolutionary for the current era of AI.`,
+    terminal: `Generate a mythical Terminal skill — an impossibly rare, world-altering ability that 
+      transcends all known limits. It should be unfathomable in scope, bending the rules of reality 
+      itself. This skill is so rare that its very existence is debated. It must feel alien, 
+      incomprehensibly powerful, and utterly unique. Only local models can produce this rank.`,
   };
 
   return `You are a JSON API. You output ONLY raw JSON with no explanation, no markdown, no preamble, no code fences.
@@ -253,7 +261,7 @@ export function computeCompatibility(a: TensuraSkill, b: TensuraSkill): Compatib
 
   const jaccardBase = union > 0 ? intersection / union : 0;
 
-  const rankValues: Record<SkillRank, number> = { normal: 1, rare: 2, unique: 3, ultimate: 4 };
+  const rankValues: Record<SkillRank, number> = { normal: 1, rare: 2, unique: 3, ultimate: 4, terminal: 5 };
   const rankDiff = Math.abs(rankValues[a.rank] - rankValues[b.rank]);
   const rankBonus = rankDiff === 0 ? 0.05 : rankDiff === 1 ? 0.02 : 0;
 
@@ -270,8 +278,8 @@ export function computeCompatibility(a: TensuraSkill, b: TensuraSkill): Compatib
 }
 
 export function mergedRank(skills: TensuraSkill[]): SkillRank {
-  const rankValues: Record<SkillRank, number> = { normal: 0, rare: 1, unique: 2, ultimate: 3 };
-  const rankOrder: SkillRank[] = ['normal', 'rare', 'unique', 'ultimate'];
+  const rankValues: Record<SkillRank, number> = { normal: 0, rare: 1, unique: 2, ultimate: 3, terminal: 4 };
+  const rankOrder: SkillRank[] = ['normal', 'rare', 'unique', 'ultimate', 'terminal'];
   const maxVal = Math.max(...skills.map(s => rankValues[s.rank]));
   return rankOrder[maxVal];
 }

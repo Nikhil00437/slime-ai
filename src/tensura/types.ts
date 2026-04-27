@@ -1,4 +1,4 @@
-export type SkillRank = 'normal' | 'rare' | 'unique' | 'ultimate';
+export type SkillRank = 'normal' | 'rare' | 'unique' | 'ultimate' | 'terminal';
 
 export interface TensuraSkill {
   id: string;
@@ -34,6 +34,7 @@ export const RANK_GENERATION_RATES = {
   rare: 0.40,
   unique: 0.05,
   ultimate: 0,
+  terminal: 0.0000001,
 } as const;
 
 export const RANK_META = {
@@ -76,5 +77,15 @@ export const RANK_META = {
     badge: '#744210',
     badgeText: '#FAF089',
     aura: 'rgba(236,201,75,0.25)',
+  },
+  terminal: {
+    label: 'Terminal',
+    color: '#000000',
+    glow: 'rgba(0,0,0,0.8)',
+    border: '#1a1a1a',
+    bg: 'linear-gradient(135deg, #000000 0%, #0a0a0a 100%)',
+    badge: '#000000',
+    badgeText: '#ffffff',
+    aura: 'rgba(0,0,0,0.5)',
   },
 } as const;

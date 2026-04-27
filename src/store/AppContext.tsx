@@ -51,6 +51,10 @@ import {
   calculateRetryDelay 
 } from '../api/retry';
 import { searchMemory, extractMemoryKeywords } from '../api/memory';
+import { confirmPreset } from '../utils/confirmDialog';
+import { backupBeforeAction } from '../utils/backup';
+import { validateFiles } from '../api/fileUploadValidation';
+import { logError } from '../api/errorLogging';
 import {
   selectVaultFolder,
   restoreVaultHandle,
@@ -397,6 +401,42 @@ export const TOOL_DEFINITIONS: Record<string, ToolDefinition> = {
         required: ["command"]
       }
     }
+  },
+  pw_browser: {
+    type: "function",
+    function: {
+      name: "pw_browser",
+      description: "Playwright CLI browser automation. Navigate, click, type, extract, wait, screenshot, scroll on any webpage.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", description: "Action: open, click, type, get, find, extract, wait, screenshot, scroll, close" },
+          target: { type: "string", description: "URL (for 'open' action)" },
+          selector: { type: "string", description: "CSS selector or text to find" },
+          value: { type: "string", description: "Text to type or direction (up/down/top/bottom for scroll)" },
+          action_json: { type: "string", description: "JSON object with full action details" },
+          timeout: { type: "string", description: "Timeout in ms (default 30000)" }
+        },
+        required: ["action"]
+      }
+    }
+  },
+  pw_run: {
+    type: "function",
+    function: {
+      name: "pw_run",
+      description: "Run a Playwright CLI command for browser automation.",
+      parameters: {
+        type: "object",
+        properties: {
+          site: { type: "string", description: "Site or context" },
+          command: { type: "string", description: "Command to run" },
+          limit: { type: "string", description: "Number of results (default 10)" },
+          format: { type: "string", description: "Output format: json, table, csv (default json)" }
+        },
+        required: ["command"]
+      }
+    }
   }
 };
 
@@ -497,45 +537,41 @@ function safeMathEval(expression: string): number | string {
     return 'Invalid expression';
   }
 }
-async function searchWeb(query: string, numResults = 5): Promise<any> {
+async function searchWeb(
+  query: string,
+  options: { numResults?: number; fetchFullContent?: boolean } = {}
+) {
+  const { numResults = 5, fetchFullContent = false } = options;
+  const outcome = await webSearch(query, { fetchFullContent });
 
-const outcome = await webSearch(query);
+  if (!isSearchSuccess(outcome)) {
+    // Return structured error for tool pipeline
+    return {
+      error: outcome.errorCode ?? 'SEARCH_FAILED',
+      message: outcome.error ?? 'No results',
+      query,
+      provider: outcome.provider,
+    };
+  }
 
-if (!isSearchSuccess(outcome) || outcome.results.length === 0) {
-  // Don't inject the error object — just let the model answer from its own knowledge
-  // or show a soft user-facing message
-  return { role: 'tool', content: '⚠️ Web search returned no results. Answering from model knowledge.' }
-} else {
-  const context = outcome.results
-    .map(r => `[${r.url}]: ${r.snippet}`)
-    .join('\n\n');
-  // inject context into the model prompt
-}}
+  if (outcome.results.length === 0) {
+    return {
+      error: 'SEARCH_FAILED',
+      message: 'No results',
+      query,
+      provider: outcome.provider,
+    };
+  }
 
-// // Use robust search tool from searchTool.ts
-// async function searchWeb(query: string, numResults = 5): Promise<any> {
-//   try {
-//     const result = await webSearch(query);
-    
-//     if ('error' in result) {
-//       return {
-//         error: result.error,
-//         errorCode: result.errorCode,
-//         provider: result.provider,
-//         results: []
-//       };
-//     }
-    
-//     return {
-//       results: result.results?.slice(0, numResults) || [],
-//       count: result.results?.length || 0,
-//       provider: result.provider,
-//       query: result.query,
-//     };
-//   } catch (e: any) {
-//     return { error: e.message || 'search_failed', results: [] };
-//   }
-// }
+  const results = outcome.results.slice(0, numResults).map((r) => ({
+    title: r.title,
+    url: r.url,
+    snippet: r.snippet,
+    ...(r.content ? { content: r.content.slice(0, 2000) } : {}),
+  }));
+
+  return { results, query: outcome.query, provider: outcome.provider };
+}
 
 // Web fetch with proper timeout and error handling
 async function fetchUrl(url: string, maxLength = 5000): Promise<any> {
@@ -730,9 +766,166 @@ export async function executeToolsParallel(
 
 // Tool execution handler
 export const handleToolExecution = async (name: string, args: Record<string, any>): Promise<any> => {
+  // Playwright CLI browser automation
+  if (name === 'pw_browser') {
+    const { executeBrowserAction } = await import('../api/opencli');
+    const isAvailable = await import('../api/opencli').then(m => m.isPlaywrightCLIAvailable());
+    
+    let action: any;
+    if (args.action_json) {
+      action = typeof args.action_json === 'string' ? JSON.parse(args.action_json) : args.action_json;
+    } else {
+      action = {
+        action: args.action,
+        target: args.target,
+        selector: args.selector,
+        value: args.value,
+        timeout: args.timeout ? parseInt(args.timeout) : undefined,
+      };
+    }
+    return executeBrowserAction(action);
+  }
+
+  // Playwright CLI adapter command
+  if (name === 'pw_run') {
+    const { runAdapterCommand } = await import('../api/opencli');
+    const additionalArgs: Record<string, string> = {};
+    for (const [key, value] of Object.entries(args)) {
+      if (!['site', 'command', 'action', 'target', 'selector', 'value', 'timeout'].includes(key) && typeof value === 'string') {
+        additionalArgs[key] = value;
+      }
+    }
+    return runAdapterCommand(args.site || '', args.command, additionalArgs);
+  }
+
+  // Use Playwright CLI for web_search
+  if (name === 'web_search') {
+    const { isPlaywrightCLIAvailable, webSearch: pwWebSearch } = await import('../api/opencli');
+    const query = args.query;
+    const numResults = parseInt(args.num_results) || 5;
+
+    if (!query || typeof query !== 'string') {
+      return { error: 'web_search requires "query" string argument' };
+    }
+
+    // Try Playwright CLI first
+    try {
+      const result = await pwWebSearch(query, numResults);
+      if (result.success && result.data?.length > 0) {
+        return result.data;
+      }
+    } catch {
+      // Fall back to Exa
+    }
+
+    // Fallback to Exa
+    try {
+      const result = await searchWeb(query, { numResults });
+      if ('error' in result) {
+        return `Search unavailable. Error: ${result.message ?? result.error}. Answering from internal knowledge.`;
+      }
+      return result;
+    } catch (e: any) {
+      return `Search unavailable (${e.message ?? String(e)}). Answering from internal knowledge.`;
+    }
+  }
+
+  // Use Playwright CLI for web_fetch
+  if (name === 'web_fetch') {
+    const { isPlaywrightCLIAvailable, webFetch: pwWebFetch } = await import('../api/opencli');
+
+    // Try Playwright CLI first
+    try {
+      const isAvailable = await isPlaywrightCLIAvailable();
+      if (isAvailable) {
+        const result = await pwWebFetch(args.url, parseInt(args.max_length) || 10000);
+        if (result.success) {
+          return {
+            content: result.data?.content,
+            url: result.data?.url || args.url,
+          };
+        }
+      }
+    } catch {
+      // Fall back to proxy
+    }
+
+    // Fallback to proxy then direct
+    const { automateProxy } = await import('../api/browserProxy');
+    const proxyResult = await automateProxy(args.url, {
+      maxLength: parseInt(args.max_length) || 10000
+    });
+
+    if (proxyResult.success && proxyResult.data?.text) {
+      return {
+        content: proxyResult.data.text,
+        url: proxyResult.data.url || args.url,
+        title: proxyResult.data.title,
+        fallback: true,
+      };
+    }
+
+    return fetchUrl(args.url, parseInt(args.max_length) || 5000);
+  }
+
+  // Playwright CLI browser automation
+  if (name === 'pw_browser') {
+    const { isPlaywrightCLIAvailable, executeBrowserAction } = await import('../api/opencli');
+    const isAvailable = await isPlaywrightCLIAvailable();
+    if (!isAvailable) {
+      return { error: 'PLAYWRIGHT_NOT_AVAILABLE', hint: 'Install: npm install -g @playwright/cli' };
+    }
+
+    let action: any;
+    if (args.action_json) {
+      action = typeof args.action_json === 'string' ? JSON.parse(args.action_json) : args.action_json;
+    } else {
+      action = {
+        action: args.action,
+        target: args.target,
+        selector: args.selector,
+        value: args.value,
+        timeout: args.timeout ? parseInt(args.timeout) : undefined,
+      };
+    }
+    return executeBrowserAction(action);
+  }
+
+  // Playwright CLI adapter commands (placeholder)
+  if (name === 'pw_run') {
+    const { isPlaywrightCLIAvailable, runAdapterCommand } = await import('../api/opencli');
+    const isAvailable = await isPlaywrightCLIAvailable();
+    if (!isAvailable) {
+      return { error: 'PLAYWRIGHT_NOT_AVAILABLE', hint: 'Install: npm install -g @playwright/cli' };
+    }
+
+    const additionalArgs: Record<string, string> = {};
+    for (const [key, value] of Object.entries(args)) {
+      if (!['site', 'command', 'action', 'target', 'selector', 'value', 'timeout'].includes(key) && typeof value === 'string') {
+        additionalArgs[key] = value;
+      }
+    }
+
+    return runAdapterCommand(args.site, args.command, additionalArgs);
+  }
+
   // API-first: Use web APIs as primary (works in browser)
   if (name === 'web_search') {
-    return searchWeb(args.query, parseInt(args.num_results) || 5);
+    const query = args.query;
+    const numResults = parseInt(args.num_results) || 5;
+    const fetchFullContent = args.fetchFullContent || false;
+    if (!query || typeof query !== 'string') {
+      return { error: 'web_search requires "query" string argument' };
+    }
+    try {
+      const result = await searchWeb(query, { numResults, fetchFullContent });
+      if ('error' in result) {
+        return `Search unavailable. Error: ${result.message ?? result.error}. Answering from internal knowledge.`;
+      }
+      return JSON.stringify(result, null, 2);
+    } catch (e: any) {
+      return `Search unavailable (${e.message ?? String(e)}). Answering from internal knowledge.`;
+    }
   }
 
   if (name === 'web_fetch') {
@@ -838,41 +1031,12 @@ export const handleToolExecution = async (name: string, args: Record<string, any
     const browser = await import('../api/browser');
     return browser.close(args.session);
   }
-  if (name === 'browser_history') {
+if (name === 'browser_history') {
     const browser = await import('../api/browser');
     if (!browser.isPlaywrightAvailable()) {
       return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
     }
     return browser.getHistory(args.session);
-  }
-  if (name === 'browser_back') {
-    const browser = await import('../api/browser');
-    if (!browser.isPlaywrightAvailable()) {
-      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
-    }
-    return withToolTimeout(() => browser.back(args.session));
-  }
-  if (name === 'browser_save_cookies') {
-    // Get cookies first then save to vault
-    const browser = await import('../api/browser');
-    if (!browser.isPlaywrightAvailable()) {
-      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
-    }
-    const browserVault = await import('../api/browserVault');
-    const cookiesResult = await browser.getCookies(args.session);
-    if (!cookiesResult.success) return cookiesResult;
-    return browserVault.saveCookies(args.session || 'default', cookiesResult.data?.cookies || []);
-  }
-  if (name === 'browser_load_cookies') {
-    // Load from vault then set in browser
-    const browserVault = await import('../api/browserVault');
-    const browser = await import('../api/browser');
-    if (!browser.isPlaywrightAvailable()) {
-      return { error: 'BROWSER_NOT_AVAILABLE', errorCode: 'playwright_missing' };
-    }
-    const loadResult = await browserVault.loadCookies(args.session || 'default');
-    if (!loadResult.success) return loadResult;
-    return browser.setCookies(loadResult.cookies || [], args.session);
   }
 
   const handle = await restoreVaultHandle();
@@ -1401,6 +1565,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteConversation = useCallback(
     async (id: string) => {
       const conv = conversations.find((c) => c.id === id);
+      if (!conv) return;
+
+      const result = await confirmPreset('deleteConversation', conv.title);
+      if (!result.confirmed) return;
+
+      await backupBeforeAction([conv], 'deleteConversation');
 
       setConversations((prev) => {
         const filtered = prev.filter((c) => c.id !== id);
@@ -1524,6 +1694,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const conv = conversations.find((c) => c.id === activeConversationId);
       const initialContextMessages = conv ? [...conv.messages, userMessage] : [userMessage];
 
+      // File upload validation (Day 9)
+      if (attachments && attachments.length > 0) {
+        const fileValidation = validateFiles(attachments.map(a => {
+          const blob = a.url.startsWith('data:') 
+            ? new Blob([a.url])
+            : new Blob([]);
+          return new File([blob], a.name, { type: a.mimeType });
+        }));
+        if (!fileValidation.valid) {
+          setError(fileValidation.error || 'Invalid file upload');
+          return;
+        }
+      }
+
       const imageAttachments = attachments
         ? attachments.filter(a => a.type === 'image').map(a => ({
             type: 'image' as const,
@@ -1618,11 +1802,11 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${provider.apiKey}`,
-                ...(provider.id === 'openrouter' ? { 'HTTP-Referer': window.location.origin, 'X-Title': 'UnifiedLLM' } : {}),
+                'Authorization': `Bearer ${memProvider.apiKey}`,
+                ...(memProvider.id === 'openrouter' ? { 'HTTP-Referer': window.location.origin, 'X-Title': 'UnifiedLLM' } : {}),
               },
               body: JSON.stringify({
-                model: provider.id === 'openrouter' ? 'openai/gpt-4o-mini' : activeModel.id,
+                model: memProvider.id === 'openrouter' ? 'openai/gpt-4o-mini' : activeModel.id,
                 messages: [{ role: 'user', content: prompt }],
                 max_tokens: 500,
                 temperature: 0.3,
@@ -2068,18 +2252,29 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
   }, []);
 
   const clearAllConversations = useCallback(async () => {
+    const result = await confirmPreset('clearAllConversations');
+    if (!result.confirmed) return;
+    
+    await backupBeforeAction(conversations, 'clearAllConversations');
     setConversations([]);
     setActiveConversationId(null);
     setActiveModel(null);
     localStorage.removeItem('mm_conversations');
-  }, []);
+  }, [conversations]);
 
-  const clearConversationMessages = useCallback((id: string) => {
+  const clearConversationMessages = useCallback(async (id: string) => {
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    
+    const result = await confirmPreset('deleteConversation', conv.title);
+    if (!result.confirmed) return;
+    
+    await backupBeforeAction([conv], 'clearConversationMessages');
     setConversations(prev => prev.map(c => {
       if (c.id !== id) return c;
       return { ...c, messages: [], updatedAt: Date.now() };
     }));
-  }, []);
+  }, [conversations]);
 
   useEffect(() => {
     loadSkills().then((loadedSkills) => {

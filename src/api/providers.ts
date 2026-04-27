@@ -722,11 +722,11 @@ export async function streamChatCompletion(
     } catch (err: any) {
       callbacks?.onError(err instanceof Error ? err.message : 'Stream error');
     }
-    return;
+return;
   }
 
   const normalized = normalizeBaseUrl(baseUrl);
-let endpoint: string;
+  let endpoint: string;
 
 if (provider === 'lmstudio' && !normalized.endsWith('/v1')) {
   endpoint = `${normalized}/v1/chat/completions`;

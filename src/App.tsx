@@ -8,6 +8,8 @@ import { HelpPalette, useHelpPalette } from './components/HelpPalette';
 import { MessageSquare, FlaskConical, Command, HelpCircle } from 'lucide-react';
 import { ToastProvider } from './components/Toast';
 import { initFavicon, setFaviconStatus } from './utils/favicon';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { initErrorLogging } from './api/errorLogging';
 
 type Tab = 'chat' | 'forge';
 
@@ -145,12 +147,59 @@ function TabBtn({ active, onClick, icon, label, accent }: {
   );
 }
 
+/**
+ * Graceful JS Degradation Wrapper
+ * Day 9: Core chat works even if non-critical scripts fail
+ */
+function GracefulDegradation({ children }: { children: React.ReactNode }) {
+  const [scriptsLoaded, setScriptsLoaded] = useState(true);
+
+  useEffect(() => {
+    // Check if critical APIs are available
+    const criticalApis = [
+      'fetch',
+      'Promise',
+      'Map',
+      'Set',
+    ];
+    
+    const missing = criticalApis.filter(api => !(api in window));
+    if (missing.length > 0) {
+      console.warn('[GracefulDegradation] Missing APIs:', missing);
+      setScriptsLoaded(false);
+    }
+
+    // Initialize error logging
+    initErrorLogging();
+  }, []);
+
+  if (!scriptsLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white p-6">
+        <div className="max-w-md text-center">
+          <h1 className="text-2xl font-bold mb-4">Browser Not Supported</h1>
+          <p className="text-gray-400 mb-6">
+            Your browser is missing critical features required to run this application.
+            Please upgrade to a modern browser like Chrome, Edge, Firefox, or Safari.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
-    <AppProvider>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <ToastProvider>
+          <GracefulDegradation>
+            <AppContent />
+          </GracefulDegradation>
+        </ToastProvider>
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

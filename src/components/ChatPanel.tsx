@@ -41,14 +41,31 @@ import {
 } from 'lucide-react';
 import { LoopControlPanel } from './LoopControlPanel';
 
-function fileToBase64(file: File): Promise<string> {
+function fileToBase64(file: File, readerRef?: React.MutableRefObject<FileReader | null>): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    if (readerRef) {
+      readerRef.current = reader;
+    }
     reader.onload = () => {
       const result = reader.result as string;
+      if (readerRef) {
+        readerRef.current = null;
+      }
       resolve(result.split(',')[1]);
     };
-    reader.onerror = reject;
+    reader.onerror = (e) => {
+      if (readerRef) {
+        readerRef.current = null;
+      }
+      reject(e);
+    };
+    reader.onabort = () => {
+      if (readerRef) {
+        readerRef.current = null;
+      }
+      reject(new Error('File read aborted'));
+    };
     reader.readAsDataURL(file);
   });
 }
@@ -131,6 +148,20 @@ export const ChatPanel: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const fileReaderRef = useRef<FileReader | null>(null);
+
+  // Streaming cleanup on unmount (Day 5)
+  useEffect(() => {
+    return () => {
+      // Cancel any in-flight file reader
+      if (fileReaderRef.current) {
+        fileReaderRef.current.abort();
+        fileReaderRef.current = null;
+      }
+      // Stop any active streaming
+      stopStreaming();
+    };
+  }, [stopStreaming]);
 
   // Load draft on mount and conversation change
   useEffect(() => {

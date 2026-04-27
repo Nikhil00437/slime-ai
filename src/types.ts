@@ -430,6 +430,9 @@ export const TOOL_SETTINGS: Record<string, ToolSettings> = {
   browser_save_cookies: { enabled: true, requiresVault: true, description: "Save cookies to vault", category: 'web' },
   browser_load_cookies: { enabled: true, requiresVault: true, description: "Load cookies from vault", category: 'web' },
   browser_history: { enabled: true, requiresVault: false, description: "Get browser history", category: 'web' },
+  // Playwright CLI browser automation
+  pw_browser: { enabled: true, requiresVault: false, description: "Playwright CLI browser automation (navigate, click, type, extract)", category: 'web' },
+  pw_run: { enabled: true, requiresVault: false, description: "Run Playwright CLI command", category: 'web' },
 };
 
 // Tool execution settings - defined before DEFAULT_SETTINGS
