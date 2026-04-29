@@ -25,17 +25,17 @@ const ToolSettingsItem = ({ toolName }: { toolName: string }) => {
   if (!toolInfo) return null;
   
   return (
-    <div className="flex items-center justify-between bg-gray-800/50 p-2 rounded-lg">
+    <div className="flex items-center justify-between bg-dark-700/30 p-2 rounded-lg border border-dark-600/20">
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-gray-300 font-mono">{toolName}</div>
-        <div className="text-xs text-gray-500 truncate">{toolInfo.description}</div>
+        <div className="text-sm text-dark-300 font-mono">{toolName}</div>
+        <div className="text-xs text-dark-500 truncate">{toolInfo.description}</div>
       </div>
       <button
         onClick={() => toggleTool(toolName)}
         className={`p-1.5 rounded transition-colors btn-press ${
           toolSettings.enabledTools[toolName] 
-            ? 'text-green-400 hover:bg-green-900/30' 
-            : 'text-gray-600 hover:bg-gray-700'
+            ? 'text-slime-400 hover:bg-slime-500/10' 
+            : 'text-dark-600 hover:bg-dark-700/40'
         }`}
         title={toolSettings.enabledTools[toolName] ? 'Disable' : 'Enable'}
       >
@@ -94,7 +94,7 @@ export const SettingsPanel: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [showAnalytics, setShowAnalytics] = useState(false);
 
   const statusColors: Record<string, string> = {
-    connected: 'bg-green-500',
+    connected: 'bg-slime-500',
     disconnected: 'bg-red-500',
     checking: 'bg-yellow-500 animate-pulse',
   };

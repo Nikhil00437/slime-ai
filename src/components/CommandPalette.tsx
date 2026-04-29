@@ -15,6 +15,8 @@ import {
   MessageSquare,
   GraduationCap,
   Scale,
+  Bug,
+  FileText,
 } from 'lucide-react';
 import { DEFAULT_SKILLS, Skill } from '../types';
 
@@ -32,9 +34,10 @@ interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onSkillActivate?: (skillId: string) => void;
+  onOpenWebScraper?: () => void;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onSkillActivate }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onSkillActivate, onOpenWebScraper }) => {
   const {
     createConversation,
     setShowSettings,
@@ -84,6 +87,32 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         onClose();
       },
       keywords: ['settings', 'preferences', 'config'],
+    },
+    {
+      id: 'open-web-scraper',
+      label: 'Open Web Scraper',
+      icon: <Bug size={16} />,
+      category: 'navigation',
+      action: () => {
+        if (onOpenWebScraper) {
+          onOpenWebScraper();
+        }
+        onClose();
+      },
+      keywords: ['web', 'scraper', 'scrape', 'search', 'rag', 'fetch'],
+    },
+    {
+      id: 'open-rag-query',
+      label: 'Open RAG Query',
+      icon: <Brain size={16} />,
+      category: 'navigation',
+      action: () => {
+        if (onOpenWebScraper) {
+          onOpenWebScraper();
+        }
+        onClose();
+      },
+      keywords: ['rag', 'query', 'retrieve', 'search', 'ask'],
     },
     // Skills
     ...DEFAULT_SKILLS.map(skill => ({
@@ -195,6 +224,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     settings: 'Settings',
     model: 'Models',
     skill: 'Skills',
+    webscraper: 'Web Scraper',
   };
 
   return (
@@ -203,16 +233,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       onClick={onClose}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm modal-overlay" />
+      <div className="absolute inset-0 cmd-backdrop" />
       
       {/* Command Palette */}
       <div 
-        className="relative w-full max-w-xl bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden animate-scale-in"
+        className="relative w-full max-w-xl bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-xl shadow-2xl overflow-hidden animate-scale-in"
         onClick={e => e.stopPropagation()}
       >
         {/* Search Input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800">
-          <Search size={18} className="text-gray-500" />
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-dark-700/40">
+          <Search size={18} className="text-dark-500" />
           <input
             ref={inputRef}
             type="text"
@@ -220,7 +250,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type a command or search..."
-            className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none text-sm"
+            className="flex-1 bg-transparent text-dark-100 placeholder-dark-500 focus:outline-none text-sm"
           />
           <kbd className="kbd">Esc</kbd>
         </div>
@@ -228,14 +258,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         {/* Commands List */}
         <div ref={listRef} className="max-h-80 overflow-y-auto p-2">
           {filteredCommands.length === 0 ? (
-            <div className="py-8 text-center text-gray-500">
+            <div className="py-8 text-center text-dark-500">
               <p className="text-sm">No commands found</p>
               <p className="text-xs mt-1">Try a different search term</p>
             </div>
           ) : (
             Object.entries(groupedCommands).map(([category, cmds]) => (
               <div key={category} className="mb-2">
-                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <div className="px-3 py-1.5 text-xs font-semibold text-dark-500 uppercase tracking-wider">
                   {categoryLabels[category]}
                 </div>
                 {cmds.map((cmd) => {
@@ -250,18 +280,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
                       onMouseEnter={() => setSelectedIndex(globalIdx)}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
                         isSelected 
-                          ? 'bg-blue-600/20 text-blue-400' 
-                          : 'text-gray-300 hover:bg-gray-800'
+                          ? 'cmd-selected text-slime-400'
+                          : 'text-dark-300 hover:bg-dark-700/40'
                       }`}
                     >
-                      <span className={isSelected ? 'text-blue-400' : 'text-gray-500'}>
+                      <span className={isSelected ? 'text-slime-400' : 'text-dark-500'}>
                         {cmd.icon}
                       </span>
                       <span className="flex-1 text-sm">{cmd.label}</span>
                       {cmd.shortcut && (
                         <kbd className="kbd">{cmd.shortcut}</kbd>
                       )}
-                      <ArrowRight size={14} className={`text-gray-600 transition-transform ${isSelected ? 'translate-x-1' : ''}`} />
+                      <ArrowRight size={14} className={`text-dark-600 transition-transform ${isSelected ? 'translate-x-1' : ''}`} />
                     </button>
                   );
                 })}
@@ -271,7 +301,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
+        <div className="flex items-center justify-between px-4 py-2 border-t border-dark-700/40 text-xs text-dark-600">
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1">
               <kbd className="kbd">↑↓</kbd> Navigate

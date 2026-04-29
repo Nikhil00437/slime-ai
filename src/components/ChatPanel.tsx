@@ -6,6 +6,7 @@ import { AttachmentInput, Attachment, getCapabilityFilters, filterModelsByCapabi
 import { calculateMessageCost, formatCost, formatTokenCount } from '../api/pricing';
 import { SkillQuickAccessBar, getPinnedSkillIds } from './SkillQuickAccessBar';
 import { SkillSuggestionBanner, getSuggestionReason } from './SkillSuggestionBanner';
+import { PersonalitySelector } from './PersonalitySelector';
 import { detectSkillFromQuery, getAttachmentTypeFromList, CONFIDENCE_THRESHOLD } from '../utils/skillDetection';
 import {
   Send,
@@ -28,11 +29,13 @@ import {
   Edit3,
   Clock,
   MoreVertical,
+  Bug,
+  X,
+  ArrowRight,
   Download,
   Copy as CopyIcon,
   GitBranch,
   Pin,
-  X,
   Library,
   ChevronUp,
   Trash2,
@@ -70,7 +73,11 @@ function fileToBase64(file: File, readerRef?: React.MutableRefObject<FileReader 
   });
 }
 
-export const ChatPanel: React.FC = () => {
+interface ChatPanelProps {
+  onOpenScraper?: () => void;
+}
+
+export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
   const {
     activeConversation,
     activeModel,
@@ -106,6 +113,8 @@ export const ChatPanel: React.FC = () => {
     pauseLoop,
     resumeLoop,
     cancelLoop,
+    pendingWebSearch,
+    setPendingWebSearch,
   } = useAppContext();
 
   const [input, setInput] = useState('');
@@ -138,6 +147,9 @@ export const ChatPanel: React.FC = () => {
   const [suggestedSkill, setSuggestedSkill] = useState<Skill | null>(null);
   const [suggestionConfidence, setSuggestionConfidence] = useState(0);
   const [suggestionReason, setSuggestionReason] = useState('');
+
+  // Personality state
+  const [activePersonalityId, setActivePersonalityId] = useState<string | null>(null);
 
   // Persist agent steps collapse state
   useEffect(() => {
@@ -241,7 +253,7 @@ export const ChatPanel: React.FC = () => {
     // Reset history navigation on new message
     const currentAttachments = [...attachments];
     setAttachments([]);
-    await sendMessage(trimmed, currentAttachments);
+    await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -308,11 +320,11 @@ export const ChatPanel: React.FC = () => {
   const providerColors: Record<string, string> = {
     ollama: 'text-orange-400',
     lmstudio: 'text-purple-400',
-    openrouter: 'text-blue-400',
-    openai: 'text-green-400',
+    openrouter: 'text-cyan-400',
+    openai: 'text-slime-400',
     anthropic: 'text-orange-400',
-    gemini: 'text-red-400',
-    grok: 'text-white',
+    gemini: 'text-rose-400',
+    grok: 'text-dark-100',
   };
 
   const allModels = providers.flatMap((p) => p.models);
@@ -323,13 +335,13 @@ export const ChatPanel: React.FC = () => {
   const capableModels = hasCapFilter ? filterModelsByCapabilities(allModels, capFilters) : allModels;
   const capableModelIds = new Set(capableModels.map(m => m.id));
 
-  return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+return (
+    <div className="flex-1 flex flex-col bg-dark-900 min-w-0">
       {/* Chat Header - Sticky at top */}
-      <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
-<button
+      <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-dark-800/65 backdrop-blur-xl border-b border-dark-700/30">
+        <button
             onClick={() => setIsSidebarOpen(true)}
-            className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors focus-ring-a11y"
+            className="p-2 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded-lg transition-colors focus-ring-a11y"
             title="Toggle sidebar"
           >
           <Menu size={20} />
@@ -339,30 +351,30 @@ export const ChatPanel: React.FC = () => {
         <div className="relative flex-1 min-w-0">
           <button
             onClick={() => setShowModelDropdown(!showModelDropdown)}
-            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 rounded-lg transition-colors w-full min-w-0 hover-lift focus-ring-a11y"
+            className="flex items-center gap-2 px-3 py-2 bg-dark-800/50 hover:bg-dark-700/50 rounded-lg transition-colors w-full min-w-0 hover-lift focus-ring-a11y border border-dark-700/30 hover:border-slime-500/20"
           >
             {currentProvider && (
               <span className={providerColors[currentProvider.id]}>
                 {providerIcons[currentProvider.id]}
               </span>
             )}
-            <span className="text-sm text-white font-medium truncate">
+            <span className="text-sm text-dark-100 font-medium truncate">
               {activeModel?.name || 'Select a model...'}
             </span>
             {/* Show capability badges for active model */}
             {activeModel && (
               <div className="flex items-center gap-1 shrink-0">
                 {activeModel.capabilities?.image && (
-                  <span className="text-[10px] bg-blue-500/20 text-blue-300 px-1 py-0.5 rounded" title="Supports images">🖼️</span>
+                  <span className="text-[10px] bg-slime-500/20 text-slime-300 px-1 py-0.5 rounded" title="Supports images">🖼️</span>
                 )}
                 {activeModel.capabilities?.audio && (
-                  <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1 py-0.5 rounded" title="Supports audio">🔊</span>
+                  <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-1 py-0.5 rounded" title="Supports audio">🔊</span>
                 )}
                 {activeModel.capabilities?.video && (
-                  <span className="text-[10px] bg-red-500/20 text-red-300 px-1 py-0.5 rounded" title="Supports video">🎬</span>
+                  <span className="text-[10px] bg-rose-500/20 text-rose-300 px-1 py-0.5 rounded" title="Supports video">🎬</span>
                 )}
                 {activeModel.capabilities?.fileUpload && (
-                  <span className="text-[10px] bg-green-500/20 text-green-300 px-1 py-0.5 rounded" title="Supports files">📁</span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1 py-0.5 rounded" title="Supports files">📁</span>
                 )}
               </div>
             )}
@@ -373,7 +385,7 @@ export const ChatPanel: React.FC = () => {
             )}
             <ChevronDown
               size={14}
-              className={`text-gray-400 shrink-0 transition-transform ${
+              className={`text-dark-500 shrink-0 transition-transform ${
                 showModelDropdown ? 'rotate-180' : ''
               }`}
             />
@@ -386,20 +398,20 @@ export const ChatPanel: React.FC = () => {
                 className="fixed inset-0 z-40"
                 onClick={() => setShowModelDropdown(false)}
               />
-              <div className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 dropdown-animate">
+              <div className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-xl shadow-2xl z-50 dropdown-animate">
                 {/* Search inside dropdown */}
-                <div className="p-2 border-b border-gray-800">
+                <div className="p-2 border-b border-dark-700/30">
                   <input
                     type="text"
                     placeholder="Filter models..."
-                    className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                    className="w-full px-3 py-1.5 bg-dark-700/50 border border-dark-600/30 rounded-lg text-sm text-dark-100 placeholder-dark-500 focus:outline-none focus:border-slime-500"
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
                 
                 {/* Favorites Section */}
                 {settings.favoriteModels.length > 0 && (
-                  <div className="border-b border-gray-800">
+                  <div className="border-b border-dark-700/30">
                     <div className="px-3 py-2 flex items-center gap-2">
                       <span className="text-yellow-400">★</span>
                       <span className="text-xs font-semibold text-yellow-400">Favorites</span>
@@ -416,8 +428,8 @@ export const ChatPanel: React.FC = () => {
                           }}
                           className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
                             activeModel?.id === model.id
-                              ? 'bg-blue-600/20 text-blue-400'
-                              : 'text-gray-300 hover:bg-gray-800'
+                              ? 'bg-slime-500/15 text-slime-400 border border-slime-500/20'
+                              : 'text-dark-300 hover:bg-dark-700/40'
                           }`}
                         >
                           <span className="text-yellow-400 text-xs">★</span>
@@ -430,10 +442,10 @@ export const ChatPanel: React.FC = () => {
                 
                 {/* Recent Models Section */}
                 {settings.recentModels.length > 0 && (
-                  <div className="border-b border-gray-800">
+                  <div className="border-b border-dark-700/30">
                     <div className="px-3 py-2 flex items-center gap-2">
-                      <Clock size={12} className="text-blue-400" />
-                      <span className="text-xs font-semibold text-blue-400">Recent</span>
+                      <Clock size={12} className="text-cyan-400" />
+                      <span className="text-xs font-semibold text-cyan-400">Recent</span>
                     </div>
                     {settings.recentModels.slice(0, 5).map(recentModelId => {
                       const model = allModels.find(m => m.id === recentModelId);
@@ -447,11 +459,11 @@ export const ChatPanel: React.FC = () => {
                           }}
                           className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
                             activeModel?.id === model.id
-                              ? 'bg-blue-600/20 text-blue-400'
-                              : 'text-gray-300 hover:bg-gray-800'
+                              ? 'bg-slime-500/15 text-slime-400 border border-slime-500/20'
+                              : 'text-dark-300 hover:bg-dark-700/40'
                           }`}
                         >
-                          <Clock size={10} className="text-gray-500" />
+                          <Clock size={10} className="text-dark-500" />
                           {model.name}
                         </button>
                       );
@@ -459,14 +471,14 @@ export const ChatPanel: React.FC = () => {
                   </div>
                 )}
                 {hasCapFilter && (
-                  <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-blue-400 font-medium">
+                  <div className="px-3 py-2 border-b border-dark-700/30 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-cyan-400 font-medium">
                       Filtering by:
                     </span>
-                    {capFilters.image && <span className="text-xs bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">🖼️ Image</span>}
-                    {capFilters.audio && <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">🔊 Audio</span>}
-                    {capFilters.video && <span className="text-xs bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">🎬 Video</span>}
-                    {capFilters.fileUpload && <span className="text-xs bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded">📁 Files</span>}
+                    {capFilters.image && <span className="text-xs bg-slime-500/20 text-slime-300 px-1.5 py-0.5 rounded">🖼️ Image</span>}
+                    {capFilters.audio && <span className="text-xs bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded">🔊 Audio</span>}
+                    {capFilters.video && <span className="text-xs bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded">🎬 Video</span>}
+                    {capFilters.fileUpload && <span className="text-xs bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">📁 Files</span>}
                   </div>
                 )}
                 {providers.map((provider) => {
@@ -480,10 +492,10 @@ export const ChatPanel: React.FC = () => {
                         <span className={providerColors[provider.id]}>
                           {providerIcons[provider.id]}
                         </span>
-                        <span className="text-xs font-semibold text-gray-400">
+                        <span className="text-xs font-semibold text-dark-400">
                           {provider.name}
                         </span>
-                        <span className="text-xs text-gray-600">({providerModels.length})</span>
+                        <span className="text-xs text-dark-600">({providerModels.length})</span>
                       </div>
                       {providerModels.map((model) => (
                         <button
@@ -494,8 +506,8 @@ export const ChatPanel: React.FC = () => {
                           }}
                           className={`w-full text-left px-4 py-2 text-sm transition-colors truncate flex items-center gap-2 ${
                             activeModel?.id === model.id
-                              ? 'bg-blue-600/20 text-blue-400'
-                              : 'text-gray-300 hover:bg-gray-800'
+                              ? 'bg-slime-500/15 text-slime-400 border border-slime-500/20'
+                              : 'text-dark-300 hover:bg-dark-700/40'
                           }`}
                         >
                           {model.name}
@@ -511,7 +523,7 @@ export const ChatPanel: React.FC = () => {
                   );
                 })}
                 {(hasCapFilter ? capableModels : allModels).length === 0 && (
-                  <div className="p-4 text-center text-sm text-gray-500">
+                  <div className="p-4 text-center text-sm text-dark-500">
                     {hasCapFilter
                       ? 'No models support the attached input type.'
                       : 'No models detected. Check settings.'}
@@ -528,13 +540,13 @@ export const ChatPanel: React.FC = () => {
             <span
               className={`w-2 h-2 rounded-full ${
                 currentProvider.status === 'connected'
-                  ? 'bg-green-500'
+                  ? 'bg-slime-500'
                   : currentProvider.status === 'checking'
                     ? 'bg-yellow-500 animate-pulse'
                     : 'bg-red-500'
               }`}
             />
-            <span className="text-gray-500 capitalize hidden sm:inline">
+            <span className="text-dark-500 capitalize hidden sm:inline">
               {currentProvider.status}
             </span>
           </div>
@@ -544,7 +556,7 @@ export const ChatPanel: React.FC = () => {
         <div className="relative">
           <button
             onClick={() => setShowTemperature(!showTemperature)}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
             title={`Temperature: ${settings.temperature}`}
           >
             <span className="text-xs font-mono">{settings.temperature.toFixed(1)}</span>
@@ -552,10 +564,10 @@ export const ChatPanel: React.FC = () => {
           {showTemperature && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowTemperature(false)} />
-              <div className="absolute top-full right-0 mt-1 p-3 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 min-w-48">
+              <div className="absolute top-full right-0 mt-1 p-3 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl z-50 min-w-48">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-400">Temperature</span>
-                  <span className="text-xs text-white font-mono">{settings.temperature.toFixed(1)}</span>
+                  <span className="text-xs text-dark-400">Temperature</span>
+                  <span className="text-xs text-dark-100 font-mono">{settings.temperature.toFixed(1)}</span>
                 </div>
                 <input
                   type="range"
@@ -564,12 +576,12 @@ export const ChatPanel: React.FC = () => {
                   step="0.1"
                   value={settings.temperature}
                   onChange={(e) => setSettings(s => ({ ...s, temperature: parseFloat(e.target.value) }))}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer accent-slime-500"
                 />
                 <div className="flex justify-between mt-1">
-                  <span className="text-[10px] text-gray-600">Precise</span>
-                  <span className="text-[10px] text-gray-600">Balanced</span>
-                  <span className="text-[10px] text-gray-600">Creative</span>
+                  <span className="text-[10px] text-dark-600">Precise</span>
+                  <span className="text-[10px] text-dark-600">Balanced</span>
+                  <span className="text-[10px] text-dark-600">Creative</span>
                 </div>
               </div>
             </>
@@ -580,7 +592,7 @@ export const ChatPanel: React.FC = () => {
         <div className="relative">
           <button
             onClick={() => setShowSystemPrompt(!showSystemPrompt)}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
             title="View system prompt"
           >
             <Sparkles size={14} />
@@ -588,12 +600,12 @@ export const ChatPanel: React.FC = () => {
           {showSystemPrompt && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowSystemPrompt(false)} />
-              <div className="absolute top-full right-0 mt-1 p-3 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 max-w-64">
+              <div className="absolute top-full right-0 mt-1 p-3 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl z-50 max-w-64">
                 <div className="flex items-center gap-2 mb-2">
                   <Sparkles size={12} className="text-purple-400" />
-                  <span className="text-xs font-semibold text-gray-300">System Prompt</span>
+                  <span className="text-xs font-semibold text-dark-300">System Prompt</span>
                 </div>
-                <p className="text-xs text-gray-400 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                <p className="text-xs text-dark-400 whitespace-pre-wrap max-h-32 overflow-y-auto">
                   {settings.systemPrompt}
                 </p>
               </div>
@@ -604,31 +616,31 @@ export const ChatPanel: React.FC = () => {
 
       {/* Toolbar with search and conversation actions */}
       {activeConversation && activeConversation.messages.length > 0 && (
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-800/50 border-b border-gray-800">
+        <div className="flex items-center justify-between px-4 py-2 bg-dark-800/30 border-b border-dark-700/30">
           <div className="flex items-center gap-2">
             {/* Search */}
             <div className="relative">
               <button
                 onClick={() => setShowSearch(!showSearch)}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
                 title="Search in conversation"
               >
                 <Search size={14} />
               </button>
               {showSearch && (
                 <div className="absolute top-full left-0 mt-1 z-50">
-                  <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1">
-                    <Search size={12} className="text-gray-400" />
+                  <div className="flex items-center gap-1 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg px-2 py-1">
+                    <Search size={12} className="text-dark-500" />
                     <input
                       type="text"
                       value={searchInput}
                       onChange={(e) => setSearchInput(e.target.value)}
                       placeholder="Search messages..."
-                      className="bg-transparent text-white text-xs placeholder-gray-500 focus:outline-none w-40"
+                      className="bg-transparent text-dark-100 text-xs placeholder-dark-600 focus:outline-none w-40"
                       autoFocus
                     />
                     {searchInput && (
-                      <button onClick={() => setSearchInput('')} className="text-gray-400 hover:text-white">
+                      <button onClick={() => setSearchInput('')} className="text-dark-500 hover:text-dark-200">
                         <X size={12} />
                       </button>
                     )}
@@ -642,15 +654,15 @@ export const ChatPanel: React.FC = () => {
               <div className="relative">
                 <button
                   onClick={() => setShowQuickPrompts(!showQuickPrompts)}
-                  className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                  className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
                   title="Quick prompts"
                 >
                   <Library size={14} />
                 </button>
                 {showQuickPrompts && (
-                  <div className="absolute top-full left-0 mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl min-w-48">
+                  <div className="absolute top-full left-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-48">
                     <div className="p-2">
-                      <div className="text-xs text-gray-500 px-2 py-1">Quick Prompts</div>
+                      <div className="text-xs text-dark-500 px-2 py-1">Quick Prompts</div>
                       {settings.quickPrompts.map(prompt => (
                         <button
                           key={prompt.id}
@@ -659,7 +671,7 @@ export const ChatPanel: React.FC = () => {
                             setShowQuickPrompts(false);
                             textareaRef.current?.focus();
                           }}
-                          className="w-full text-left px-2 py-1.5 text-sm text-gray-300 hover:bg-gray-700 rounded"
+                          className="w-full text-left px-2 py-1.5 text-sm text-dark-300 hover:bg-dark-700/40 rounded"
                         >
                           {prompt.name}
                         </button>
@@ -675,7 +687,7 @@ export const ChatPanel: React.FC = () => {
               <button
                 onClick={regenerateLastResponse}
                 disabled={isLoading}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
+                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors disabled:opacity-50"
                 title="Regenerate last response"
               >
                 <RotateCcw size={14} />
@@ -687,7 +699,7 @@ export const ChatPanel: React.FC = () => {
             {/* Timestamp toggle */}
             <button
               onClick={() => setSettings(s => ({ ...s, showTimestamps: !s.showTimestamps }))}
-              className={`p-1.5 rounded transition-colors ${settings.showTimestamps ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              className={`p-1.5 rounded transition-colors ${settings.showTimestamps ? 'text-cyan-400 bg-cyan-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
               title={settings.showTimestamps ? 'Hide timestamps' : 'Show timestamps'}
             >
               <Clock size={14} />
@@ -696,7 +708,7 @@ export const ChatPanel: React.FC = () => {
             {/* Token count toggle */}
             <button
               onClick={() => setSettings(s => ({ ...s, showCostEstimate: !s.showCostEstimate }))}
-              className={`p-1.5 rounded transition-colors ${settings.showCostEstimate ? 'text-green-400 bg-green-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              className={`p-1.5 rounded transition-colors ${settings.showCostEstimate ? 'text-slime-400 bg-slime-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
               title={settings.showCostEstimate ? 'Hide cost/token info' : 'Show cost and token count'}
             >
               <span className="text-xs font-mono">$</span>
@@ -710,7 +722,7 @@ export const ChatPanel: React.FC = () => {
               className={`p-1.5 rounded transition-colors ${
                 activeConversation?.memoryEnabled 
                   ? 'text-purple-400 bg-purple-400/10' 
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'
               }`}
               title={activeConversation?.memoryEnabled ? 'Memory enabled for this conversation' : 'Enable memory for this conversation'}
             >
@@ -721,20 +733,20 @@ export const ChatPanel: React.FC = () => {
             <div className="relative">
               <button
                 onClick={() => setShowConvMenu(!showConvMenu)}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
               >
                 <MoreVertical size={14} />
               </button>
               {showConvMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowConvMenu(false)} />
-                  <div className="absolute top-full right-0 mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl min-w-40">
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-40">
                     <button
                       onClick={() => {
                         duplicateConversation(activeConversation.id);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 rounded-t-lg"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40 rounded-t-lg"
                     >
                       <CopyIcon size={14} /> Duplicate
                     </button>
@@ -744,7 +756,7 @@ export const ChatPanel: React.FC = () => {
                         setTitleInput(activeConversation.title);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40"
                     >
                       <Pencil size={14} /> Rename
                     </button>
@@ -753,7 +765,7 @@ export const ChatPanel: React.FC = () => {
                         togglePinConversation(activeConversation.id);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40"
                     >
                       <Pin size={14} /> {activeConversation.isPinned ? 'Unpin' : 'Pin'}
                     </button>
@@ -762,7 +774,7 @@ export const ChatPanel: React.FC = () => {
                         exportConversation(activeConversation.id, 'markdown');
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40"
                     >
                       <Download size={14} /> Export Markdown
                     </button>
@@ -771,7 +783,7 @@ export const ChatPanel: React.FC = () => {
                         exportConversation(activeConversation.id, 'pdf');
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40"
                     >
                       <Download size={14} /> Export PDF
                     </button>
@@ -806,8 +818,8 @@ export const ChatPanel: React.FC = () => {
         {/* Active Top Status */}
         {isExecutingTool && activeTools.length > 0 && (
           <div className="sticky top-4 z-10 p-2 inset-x-0 flex justify-center pointer-events-none">
-            <div className="flex items-center gap-2 px-4 py-2 bg-black/40 border border-white/10 backdrop-blur-md rounded-full text-xs text-blue-300 shadow-xl pointer-events-auto">
-              <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+            <div className="flex items-center gap-2 px-4 py-2 bg-dark-900/60 border border-slime-500/20 backdrop-blur-md rounded-full text-xs text-cyan-300 shadow-xl pointer-events-auto">
+              <div className="w-2 h-2 rounded-full bg-slime-400 animate-pulse" />
               <span>Agent Step {activeConversation?.agentSteps?.length || 1}: {activeTools.join(', ')}...</span>
             </div>
           </div>
@@ -815,11 +827,11 @@ export const ChatPanel: React.FC = () => {
         {!activeConversation || activeConversation.messages.length === 0 ? (
           /* Empty State */
           <div className="flex flex-col items-center justify-center h-full px-4 text-center">
-            <div className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-gray-800">
-              <Sparkles size={48} className="text-blue-400" />
+            <div className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-slime-500/10 to-cyan-500/10 border border-dark-700/30">
+              <Sparkles size={48} className="text-slime-400" />
             </div>
-            <h1 className="text-2xl font-bold text-white mb-2">Slime AI</h1>
-            <p className="text-gray-400 max-w-md mb-8">
+            <h1 className="text-2xl font-bold gradient-text mb-2">Slime AI</h1>
+            <p className="text-dark-400 max-w-md mb-8">
               Chat with AI models from Ollama, LM Studio, and OpenRouter. Select a model from the
               sidebar to get started.
             </p>
@@ -845,21 +857,21 @@ export const ChatPanel: React.FC = () => {
                         onClick={() => {
                           setActiveModel(model);
                         }}
-                        className="flex items-center gap-3 p-3 bg-gray-800/50 hover:bg-gray-800 border border-gray-700 hover:border-gray-600 rounded-xl text-left transition-colors"
+                        className="flex items-center gap-3 p-3 bg-dark-800/30 hover:bg-dark-700/40 border border-dark-700/30 hover:border-slime-500/25 rounded-xl text-left transition-all glass-hover"
                       >
                         <span className={providerColors[model.provider]}>
                           {providerIcons[model.provider]}
                         </span>
                         <div className="min-w-0">
-                          <div className="text-sm text-white truncate">
+                          <div className="text-sm text-dark-100 truncate">
                             {model.name.length > 28
                               ? model.name.slice(0, 28) + '...'
                               : model.name}
                           </div>
-                          <div className="text-xs text-gray-500 flex items-center gap-1">
+                          <div className="text-xs text-dark-500 flex items-center gap-1">
                             {prov?.name}
                             {isRecent && (
-                              <span className="text-blue-400">• Recent</span>
+                              <span className="text-cyan-400">• Recent</span>
                             )}
                           </div>
                         </div>
@@ -871,7 +883,7 @@ export const ChatPanel: React.FC = () => {
             )}
 
             {allModels.length === 0 && (
-              <div className="text-sm text-gray-500">
+              <div className="text-sm text-dark-500">
                 <p>Make sure Ollama or LM Studio is running locally, or configure OpenRouter in settings.</p>
               </div>
             )}
@@ -879,6 +891,44 @@ export const ChatPanel: React.FC = () => {
         ) : (
           /* Messages */
           <div className="max-w-3xl mx-auto py-4" ref={messagesContainerRef}>
+            {/* Web Search Prompt - shows when pending web search is detected */}
+            {pendingWebSearch && (
+              <div className="px-4 py-3 mb-2 animate-slide-in-down">
+                <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border-2 border-violet-500/50 shadow-lg shadow-violet-900/20">
+                  <div className="p-2.5 rounded-lg bg-violet-600/40">
+                    <Bug size={24} className="text-violet-300" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-white flex items-center gap-2">
+                      <span className="text-violet-300">🔍 Web Search:</span> 
+                      <span className="text-white">"{pendingWebSearch}"</span>
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Click "Open Scraper" to select pages and save to vault
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      onOpenScraper?.();
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold
+                               bg-violet-600 hover:bg-violet-500 text-white transition-all hover:scale-105 shadow-lg shrink-0"
+                  >
+                    <Bug size={16} />
+                    Open Scraper
+                    <ArrowRight size={14} />
+                  </button>
+                  <button
+                    onClick={() => setPendingWebSearch(null)}
+                    className="p-2.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors shrink-0"
+                    title="Dismiss"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {activeConversation.messages.map((message, index) => {
               const isHighlighted = searchInput && message.content.toLowerCase().includes(searchInput.toLowerCase());
               const isLastUserMessage = message.role === 'user' && 
@@ -887,8 +937,8 @@ export const ChatPanel: React.FC = () => {
               return (
                 <div
                   key={message.id}
-                  className={`flex gap-4 px-4 py-4 group relative animate-message-bubble ${
-                    message.role === 'user' ? 'chat-bubble-user' : message.role === 'tool' ? 'chat-bubble-tool' : 'chat-bubble-assistant'
+                  className={`flex gap-4 px-4 py-4 group relative animate-msg-appear rounded-2xl ${
+                    message.role === 'user' ? 'msg-user' : message.role === 'tool' ? 'bg-dark-800/40 border border-dark-700/40' : 'msg-assistant'
                   } ${
                     index > 0 && activeConversation.messages[index - 1].role === message.role
                       ? 'py-1'
@@ -898,16 +948,16 @@ export const ChatPanel: React.FC = () => {
                   {/* Avatar */}
                   <div className="shrink-0 mt-0.5">
                     {message.role === 'user' ? (
-                      <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                        <User size={16} className="text-white" />
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slime-500 to-teal-500 flex items-center justify-center">
+                        <User size={16} className="text-dark-900" />
                       </div>
                     ) : message.role === 'tool' ? (
-                      <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
-                        <Bot size={16} className="text-gray-400" />
+                      <div className="w-8 h-8 rounded-full bg-dark-800 border border-dark-700/50 flex items-center justify-center">
+                        <Bot size={16} className="text-dark-400" />
                       </div>
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
-                        <Sparkles size={16} className="text-white" />
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slime-400 to-teal-500 flex items-center justify-center">
+                        <Sparkles size={16} className="text-dark-900" />
                       </div>
                     )}
                   </div>
@@ -915,11 +965,11 @@ export const ChatPanel: React.FC = () => {
                   {/* Message Content */}
                   <div className="flex-1 min-w-0">
                     {message.role === 'tool' ? (
-                      <details className="w-full bg-black/20 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
-                        <summary className="px-4 py-2 text-xs text-gray-400 select-none group-hover:text-gray-300 focus:outline-none">
+                      <details className="w-full bg-dark-900/40 border border-dark-700/50 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
+                        <summary className="px-4 py-2 text-xs text-dark-400 select-none group-hover:text-dark-300 focus:outline-none">
                           Observed Tool Output (ID: {message.toolCallId?.slice(0, 8) || 'N/A'})
                         </summary>
-                        <div className="px-4 py-3 border-t border-white/5 text-xs text-gray-500 font-mono whitespace-pre-wrap mt-0 bg-black/40 max-h-96 overflow-y-auto">
+                        <div className="px-4 py-3 border-t border-dark-700/40 text-xs text-dark-500 font-mono whitespace-pre-wrap mt-0 bg-dark-900/60 max-h-96 overflow-y-auto">
                           {message.content}
                         </div>
                       </details>
@@ -930,31 +980,31 @@ export const ChatPanel: React.FC = () => {
                             {message.role === 'user' ? 'You' : 'Assistant'}
                           </span>
                           {message.role === 'assistant' && (
-                            <span className="text-xs text-gray-500 font-mono">
+                            <span className="text-xs text-dark-500 font-mono">
                               {message.model.length > 30
                                 ? message.model.slice(0, 30) + '...'
                                 : message.model}
                             </span>
                           )}
                           {settings.showTimestamps && (
-                            <span className="text-xs text-gray-600">
+                            <span className="text-xs text-dark-600">
                               {new Date(message.timestamp).toLocaleTimeString()}
                             </span>
                           )}
                           {message.responseTime && message.role === 'assistant' && (
-                            <span className="text-xs text-gray-600">
+                            <span className="text-xs text-dark-600">
                               ({Math.round(message.responseTime / 1000)}s)
                             </span>
                           )}
                           {/* Token count and cost */}
                           {message.usage && message.role === 'assistant' && settings.showCostEstimate && (
-                            <span className="text-xs text-gray-600">
+                            <span className="text-xs text-dark-600">
                               {formatTokenCount(message.usage.totalTokens)} tokens • {formatCost(calculateMessageCost(message.provider, message.model, message.usage))}
                             </span>
                           )}
                           {message.isStreaming && (
-                            <span className="flex items-center gap-1 text-xs text-blue-400">
-                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse streaming-glow" />
+                            <span className="flex items-center gap-1 text-xs text-slime-400">
+                              <span className="w-1.5 h-1.5 bg-slime-400 rounded-full animate-pulse streaming-glow" />
                               typing...
                             </span>
                           )}
@@ -964,7 +1014,7 @@ export const ChatPanel: React.FC = () => {
                               Error
                               <button
                                 onClick={retryLastMessage}
-                                className="ml-1 text-blue-400 hover:text-blue-300"
+                                className="ml-1 text-slime-400 hover:text-slime-300"
                                 title="Retry"
                               >
                                 <RotateCcw size={12} />
@@ -976,7 +1026,7 @@ export const ChatPanel: React.FC = () => {
                             {message.role === 'assistant' && (
                               <button
                                 onClick={() => copyMessageToClipboard(message.content)}
-                                className="p-1 text-gray-500 hover:text-white transition-colors copy-button focus-ring-a11y"
+                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors copy-button focus-ring-a11y"
                                 title="Copy response"
                               >
                                 {_copiedMessageId === message.id ? (
@@ -992,7 +1042,7 @@ export const ChatPanel: React.FC = () => {
                                   setEditingMessageId(message.id);
                                   setEditContent(message.content);
                                 }}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
+                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
                                 title="Edit and resend"
                               >
                                 <Edit3 size={12} />
@@ -1001,7 +1051,7 @@ export const ChatPanel: React.FC = () => {
                             {message.role === 'user' && (
                               <button
                                 onClick={() => branchConversation(message.id)}
-                                className="p-1 text-gray-500 hover:text-white transition-colors"
+                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
                                 title="Continue from here as new chat"
                               >
                                 <GitBranch size={12} />
@@ -1015,7 +1065,7 @@ export const ChatPanel: React.FC = () => {
                             <textarea
                               value={editContent}
                               onChange={(e) => setEditContent(e.target.value)}
-                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm resize-none focus:outline-none focus:border-blue-500"
+                              className="w-full bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-dark-100 text-sm resize-none focus:outline-none focus:border-slime-500/40"
                               rows={3}
                               autoFocus
                             />
@@ -1025,20 +1075,20 @@ export const ChatPanel: React.FC = () => {
                                   await editLastMessage(editContent);
                                   setEditingMessageId(null);
                                 }}
-                                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
+                                className="px-3 py-1 btn-send text-dark-900 text-xs rounded-lg font-medium"
                               >
                                 Resend
                               </button>
                               <button
                                 onClick={() => setEditingMessageId(null)}
-                                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg"
+                                className="px-3 py-1 bg-dark-700 hover:bg-dark-600 text-dark-100 text-xs rounded-lg"
                               >
                                 Cancel
                               </button>
                             </div>
                           </div>
                         ) : (
-                          <div className="text-gray-200">
+                          <div className="text-dark-200">
                             {message.role === 'user' ? (
                               <div className="space-y-2">
                                 {message.attachments && message.attachments.length > 0 && (
@@ -1049,18 +1099,18 @@ export const ChatPanel: React.FC = () => {
                                           key={idx}
                                           src={att.url}
                                           alt={att.name}
-                                          className="max-w-xs max-h-48 rounded-lg border border-gray-700"
+                                          className="max-w-xs max-h-48 rounded-lg border border-dark-700/50"
                                         />
                                       ) : (
-                                        <div key={idx} className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg">
-                                          <FileText size={16} className="text-gray-400" />
-                                          <span className="text-sm text-gray-300">{att.name}</span>
+                                        <div key={idx} className="flex items-center gap-2 bg-dark-800/70 px-3 py-2 rounded-lg border border-dark-700/40">
+                                          <FileText size={16} className="text-dark-400" />
+                                          <span className="text-sm text-dark-300">{att.name}</span>
                                         </div>
                                       )
                                     ))}
                                   </div>
                                 )}
-                                <div className="whitespace-pre-wrap text-gray-100">
+                                <div className="whitespace-pre-wrap text-dark-100">
                                   {message.content}
                                 </div>
                               </div>
@@ -1080,10 +1130,10 @@ export const ChatPanel: React.FC = () => {
         
         {/* Collapsible Agent Steps Section */}
         {activeConversation?.agentSteps && activeConversation.agentSteps.length > 0 && (
-          <div className="px-4 py-2 border-t border-gray-800">
+          <div className="px-4 py-2 border-t border-dark-700/30">
             <button
               onClick={() => setAgentStepsCollapsed(!agentStepsCollapsed)}
-              className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-300"
+              className="flex items-center gap-2 text-xs text-dark-400 hover:text-dark-300"
             >
               {agentStepsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
               <span>Agent Steps ({activeConversation.agentSteps.length})</span>
@@ -1091,21 +1141,21 @@ export const ChatPanel: React.FC = () => {
             {!agentStepsCollapsed && (
               <div className="mt-2 space-y-2">
                 {activeConversation.agentSteps.map((step, idx) => (
-                  <div key={idx} className="bg-black/30 border border-white/5 rounded-lg p-3">
-                    <div className="text-xs font-semibold text-blue-400 mb-2">
+                  <div key={idx} className="bg-dark-900/40 border border-dark-700/40 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-slime-400 mb-2">
                       Step {step.stepNumber}
                     </div>
-                    <div className="text-xs text-gray-400 mb-1">
+                    <div className="text-xs text-dark-400 mb-1">
                       Tools: {step.toolCalls.map(tc => tc.function.name).join(', ')}
                     </div>
                     {step.toolResults.length > 0 && (
                       <details className="mt-2">
-                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                        <summary className="text-xs text-dark-500 cursor-pointer hover:text-dark-400">
                           Results ({step.toolResults.length})
                         </summary>
                         <div className="mt-2 space-y-1">
                           {step.toolResults.map((result, rIdx) => (
-                            <div key={rIdx} className="text-xs text-gray-600 font-mono bg-black/40 p-2 rounded max-h-24 overflow-y-auto">
+                            <div key={rIdx} className="text-xs text-dark-600 font-mono bg-dark-900/60 p-2 rounded max-h-24 overflow-y-auto">
                               {result.content.slice(0, 200)}
                               {result.content.length > 200 && '...'}
                             </div>
@@ -1122,7 +1172,7 @@ export const ChatPanel: React.FC = () => {
       </div>
 
       {/* Input Area - Fixed at bottom */}
-      <div className="sticky bottom-0 z-10 border-t border-gray-800 p-4 bg-gray-900">
+      <div className="sticky bottom-0 z-10 border-t border-dark-700/30 p-4 bg-dark-900/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto">
           {/* Skill Suggestion Banner - shown when skill detected but below auto-threshold */}
           {suggestedSkill && (
@@ -1140,7 +1190,17 @@ export const ChatPanel: React.FC = () => {
             />
           )}
 
-          {/* Skill Quick Access Bar */}
+          {/* Personality Selector - Rotating lineup */}
+          <PersonalitySelector
+            activePersonalityId={activePersonalityId}
+            onPersonalitySelect={(id) => {
+              setActivePersonalityId(id);
+              setSuggestedSkill(null);
+            }}
+          />
+
+          {/* Skill Quick Access Bar - removed, using Personality Selector instead */}
+          {/*}
           <SkillQuickAccessBar
             skills={DEFAULT_SKILLS as Skill[]}
             activeSkillId={activeSkillForBar}
@@ -1150,6 +1210,7 @@ export const ChatPanel: React.FC = () => {
             }}
             pinnedSkillIds={pinnedSkillIds}
           />
+          */}
 
           {attachments.length > 0 && (
             <div className="mb-2 animate-fade-in-down">
@@ -1161,10 +1222,11 @@ export const ChatPanel: React.FC = () => {
           )}
           {/* Enhanced Input Container with Glow Effect */}
           <div 
-            className={`flex items-end gap-2 bg-gray-800 border rounded-xl px-3 py-2 transition-all duration-300 ${
+            className={`chat-input-wrap flex items-end gap-2 ${
+
               attachments.length > 0 
-                ? 'border-purple-500/50 shadow-lg shadow-purple-500/20' 
-                : 'border-gray-700 focus-within:border-blue-500 focus-within:shadow-lg focus-within:shadow-blue-500/20'
+                ? 'border-slime-500/50 shadow-lg shadow-slime-500/20' 
+                : 'focus-within:border-slime-500/35 focus-within:shadow-slime-500/10'
             }`}
             onDragOver={(e) => {
               e.preventDefault();
@@ -1172,16 +1234,16 @@ export const ChatPanel: React.FC = () => {
             }}
             onDragEnter={(e) => {
               e.preventDefault();
-              e.currentTarget.classList.add('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
+              e.currentTarget.classList.add('border-slime-500', 'shadow-lg', 'shadow-slime-500/20');
             }}
             onDragLeave={(e) => {
               e.preventDefault();
-              e.currentTarget.classList.remove('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
+              e.currentTarget.classList.remove('border-slime-500', 'shadow-lg', 'shadow-slime-500/20');
             }}
             onDrop={async (e) => {
               e.preventDefault();
               e.stopPropagation();
-              e.currentTarget.classList.remove('border-blue-500', 'shadow-lg', 'shadow-blue-500/20');
+              e.currentTarget.classList.remove('border-slime-500', 'shadow-lg', 'shadow-slime-500/20');
               
               const files = e.dataTransfer.files;
               if (!files || files.length === 0) return;
@@ -1218,14 +1280,14 @@ export const ChatPanel: React.FC = () => {
           >
             <div className="flex items-center gap-1 pb-1">
               <button
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors btn-press"
+                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors btn-press"
                 title="Add image"
                 onClick={() => document.getElementById('image-input')?.click()}
               >
                 <Image size={16} />
               </button>
               <button
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors btn-press"
+                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors btn-press"
                 title="Add file"
                 onClick={() => document.getElementById('file-input')?.click()}
               >
@@ -1283,7 +1345,7 @@ export const ChatPanel: React.FC = () => {
             {input.length > 200 && (
               <button
                 onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
-                className={`p-1.5 rounded transition-colors btn-press ${showMarkdownPreview ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                className={`p-1.5 rounded transition-colors btn-press ${showMarkdownPreview ? 'text-cyan-400 bg-cyan-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
                 title={showMarkdownPreview ? 'Edit' : 'Preview'}
               >
                 <span className="text-xs">{showMarkdownPreview ? '✏️' : '👁️'}</span>
@@ -1291,7 +1353,7 @@ export const ChatPanel: React.FC = () => {
             )}
             {/* Character count for long inputs */}
             {input.length > 500 && (
-              <span className={`text-xs font-mono ${input.length > 4000 ? 'text-red-400' : 'text-gray-500'}`}>
+              <span className={`text-xs font-mono ${input.length > 4000 ? 'text-red-400' : 'text-dark-500'}`}>
                 {input.length.toLocaleString()}
               </span>
             )}
@@ -1302,7 +1364,7 @@ export const ChatPanel: React.FC = () => {
                 className={`p-1.5 rounded transition-colors btn-press ${
                   showLoopPanel || loopState
                     ? 'text-green-400 bg-green-400/10'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    : 'text-dark-400 hover:text-dark-100 hover:bg-dark-700/40'
                 }`}
                 title={showLoopPanel ? 'Hide loop controls' : 'Loop controls'}
               >
@@ -1325,7 +1387,7 @@ export const ChatPanel: React.FC = () => {
               </div>
             )}
             {showMarkdownPreview ? (
-              <div className="flex-1 min-h-[60px] max-h-[200px] overflow-y-auto bg-gray-900 rounded-lg px-3 py-2 text-gray-200 text-sm whitespace-pre-wrap">
+              <div className="flex-1 min-h-[60px] max-h-[200px] overflow-y-auto bg-dark-900 rounded-lg px-3 py-2 text-dark-200 text-sm whitespace-pre-wrap">
                 {input}
               </div>
             ) : (
@@ -1343,7 +1405,7 @@ export const ChatPanel: React.FC = () => {
                   : 'Select a model first...'
               }
               rows={1}
-              className="flex-1 bg-transparent text-white placeholder-gray-500 text-sm resize-none focus:outline-none min-h-[24px] max-h-[200px]"
+              className="flex-1 bg-transparent text-dark-100 placeholder-dark-500 text-sm resize-none focus:outline-none min-h-[24px] max-h-[200px]"
               disabled={!activeModel}
             />
             )}
@@ -1359,7 +1421,7 @@ export const ChatPanel: React.FC = () => {
               <button
                 onClick={handleSubmit}
                 disabled={!activeModel || (!input.trim() && attachments.length === 0)}
-                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg transition-colors shrink-0 btn-press ripple ripple-blue disabled:btn-press:scale-100 focus-ring-a11y"
+                className="p-2 btn-send disabled:bg-dark-700 disabled:text-dark-500 text-dark-900 rounded-lg transition-colors shrink-0 btn-press disabled:btn-press:scale-100 focus-ring-a11y"
                 title="Send message (Ctrl+Enter)"
               >
                 <Send size={16} />
@@ -1367,29 +1429,29 @@ export const ChatPanel: React.FC = () => {
             )}
           </div>
           {/* Enhanced Keyboard shortcuts hint */}
-          <div className="flex items-center justify-between mt-2 text-xs text-gray-600">
+          <div className="flex items-center justify-between mt-2 text-xs text-dark-600">
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1">
                 <kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd>
-                <span className="text-gray-500 ml-1">History</span>
+                <span className="text-dark-500 ml-1">History</span>
               </span>
               <span className="flex items-center gap-1">
                 <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">↵</kbd>
-                <span className="text-gray-500 ml-1">Send</span>
+                <span className="text-dark-500 ml-1">Send</span>
               </span>
               <span className="flex items-center gap-1">
                 <kbd className="kbd">Esc</kbd>
-                <span className="text-gray-500 ml-1">Close</span>
+                <span className="text-dark-500 ml-1">Close</span>
               </span>
             </div>
             {inputHistory.length > 0 && (
-              <span className="text-gray-500">{inputHistory.length} saved</span>
+              <span className="text-dark-500">{inputHistory.length} saved</span>
             )}
           </div>
 
           {/* Loop Control Panel */}
           {showLoopPanel && settings.loopEnabled && (
-            <div className="mt-3 pt-3 border-t border-gray-700">
+            <div className="mt-3 pt-3 border-t border-dark-700/40">
               <LoopControlPanel
                 isCompact={false}
                 onStartLoop={(prompt, config) => {
@@ -1412,7 +1474,7 @@ export const ChatPanel: React.FC = () => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             setShowNewMessages(false);
           }}
-          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-full shadow-lg transition-all animate-bounce"
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 text-dark-900 text-sm rounded-full shadow-lg shadow-slime-500/30 transition-all animate-bounce"
         >
           <ChevronDown size={14} />
           New messages
@@ -1422,13 +1484,13 @@ export const ChatPanel: React.FC = () => {
       {/* Editing title inline */}
       {editingTitle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 w-80">
-            <h3 className="text-white font-medium mb-3">Rename Conversation</h3>
+          <div className="bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-xl p-4 w-80">
+            <h3 className="text-dark-100 font-medium mb-3">Rename Conversation</h3>
             <input
               type="text"
               value={titleInput}
               onChange={(e) => setTitleInput(e.target.value)}
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-dark-900 border border-dark-700/50 rounded-lg px-3 py-2 text-dark-100 text-sm focus:outline-none focus:border-slime-500/40"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -1446,13 +1508,13 @@ export const ChatPanel: React.FC = () => {
                   renameConversation(activeConversation!.id, titleInput);
                   setEditingTitle(false);
                 }}
-                className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg"
+                className="flex-1 px-3 py-1.5 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 text-dark-900 text-sm rounded-lg font-medium"
               >
                 Save
               </button>
               <button
                 onClick={() => setEditingTitle(false)}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg"
+                className="px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-dark-100 text-sm rounded-lg"
               >
                 Cancel
               </button>

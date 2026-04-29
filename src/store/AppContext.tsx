@@ -81,7 +81,7 @@ import {
 import { loadSkills } from '../api/skillStorage';
 import { Attachment } from '../components/AttachmentInput';
 import { SlimeSkill } from '../slime/types';
-import { TOOL_SETTINGS, Skill } from '../types';
+import { TOOL_SETTINGS, Skill, PERSONALITY_PRESETS } from '../types';
 import {
   detectSkillFromQuery,
   getAttachmentTypeFromList,
@@ -134,7 +134,7 @@ interface AppContextType extends AppState {
   createConversation: (modelId?: string, provider?: ProviderType) => string;
   setActiveConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
-  sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
+  sendMessage: (content: string, attachments?: Attachment[], personalityId?: string) => Promise<void>;
   stopStreaming: () => void;
   detectModels: (providerId: ProviderType) => Promise<void>;
   updateProvider: (id: ProviderType, updates: Partial<Provider>) => void;
@@ -187,6 +187,9 @@ interface AppContextType extends AppState {
   resetLoop: () => void;
   setLoopState: React.Dispatch<React.SetStateAction<LoopState | null>>;
   setLoopPaused: React.Dispatch<React.SetStateAction<boolean>>;
+  // WebScraper routing
+  pendingWebSearch: string | null;
+  setPendingWebSearch: (query: string | null) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -766,41 +769,9 @@ export async function executeToolsParallel(
 
 // Tool execution handler
 export const handleToolExecution = async (name: string, args: Record<string, any>): Promise<any> => {
-  // Playwright CLI browser automation
-  if (name === 'pw_browser') {
-    const { executeBrowserAction } = await import('../api/opencli');
-    const isAvailable = await import('../api/opencli').then(m => m.isPlaywrightCLIAvailable());
-    
-    let action: any;
-    if (args.action_json) {
-      action = typeof args.action_json === 'string' ? JSON.parse(args.action_json) : args.action_json;
-    } else {
-      action = {
-        action: args.action,
-        target: args.target,
-        selector: args.selector,
-        value: args.value,
-        timeout: args.timeout ? parseInt(args.timeout) : undefined,
-      };
-    }
-    return executeBrowserAction(action);
-  }
-
-  // Playwright CLI adapter command
-  if (name === 'pw_run') {
-    const { runAdapterCommand } = await import('../api/opencli');
-    const additionalArgs: Record<string, string> = {};
-    for (const [key, value] of Object.entries(args)) {
-      if (!['site', 'command', 'action', 'target', 'selector', 'value', 'timeout'].includes(key) && typeof value === 'string') {
-        additionalArgs[key] = value;
-      }
-    }
-    return runAdapterCommand(args.site || '', args.command, additionalArgs);
-  }
-
-  // Use Playwright CLI for web_search
+  // web_search - Google CSE first + Exa fallback
   if (name === 'web_search') {
-    const { isPlaywrightCLIAvailable, webSearch: pwWebSearch } = await import('../api/opencli');
+    const { googleSearch } = await import('../api/google-search');
     const query = args.query;
     const numResults = parseInt(args.num_results) || 5;
 
@@ -808,14 +779,14 @@ export const handleToolExecution = async (name: string, args: Record<string, any
       return { error: 'web_search requires "query" string argument' };
     }
 
-    // Try Playwright CLI first
+    // Try Google CSE first
     try {
-      const result = await pwWebSearch(query, numResults);
-      if (result.success && result.data?.length > 0) {
-        return result.data;
+      const results = await googleSearch(query, numResults);
+      if (results && results.length > 0) {
+        return results;
       }
     } catch {
-      // Fall back to Exa
+      // Fall through to Exa
     }
 
     // Fallback to Exa
@@ -830,27 +801,27 @@ export const handleToolExecution = async (name: string, args: Record<string, any
     }
   }
 
-  // Use Playwright CLI for web_fetch
+  // web_fetch - Google cache + proxy fallback
   if (name === 'web_fetch') {
-    const { isPlaywrightCLIAvailable, webFetch: pwWebFetch } = await import('../api/opencli');
+    const { googleFetch } = await import('../api/google-search');
+    const url = args.url;
+    const maxLength = parseInt(args.max_length) || 10000;
 
-    // Try Playwright CLI first
+    // Try Google cache + direct fetch first
     try {
-      const isAvailable = await isPlaywrightCLIAvailable();
-      if (isAvailable) {
-        const result = await pwWebFetch(args.url, parseInt(args.max_length) || 10000);
-        if (result.success) {
-          return {
-            content: result.data?.content,
-            url: result.data?.url || args.url,
-          };
-        }
+      const result = await googleFetch(url, maxLength);
+      if (result.content && result.content.length > 100) {
+        return {
+          content: result.content,
+          url: result.url,
+          source: result.source,
+        };
       }
     } catch {
-      // Fall back to proxy
+      // Fall through to proxy
     }
 
-    // Fallback to proxy then direct
+    // Fallback to proxy
     const { automateProxy } = await import('../api/browserProxy');
     const proxyResult = await automateProxy(args.url, {
       maxLength: parseInt(args.max_length) || 10000
@@ -909,23 +880,22 @@ export const handleToolExecution = async (name: string, args: Record<string, any
     return runAdapterCommand(args.site, args.command, additionalArgs);
   }
 
-  // API-first: Use web APIs as primary (works in browser)
+  // Route web_search to WebScraper UI directly
   if (name === 'web_search') {
     const query = args.query;
-    const numResults = parseInt(args.num_results) || 5;
-    const fetchFullContent = args.fetchFullContent || false;
     if (!query || typeof query !== 'string') {
       return { error: 'web_search requires "query" string argument' };
     }
-    try {
-      const result = await searchWeb(query, { numResults, fetchFullContent });
-      if ('error' in result) {
-        return `Search unavailable. Error: ${result.message ?? result.error}. Answering from internal knowledge.`;
-      }
-      return JSON.stringify(result, null, 2);
-    } catch (e: any) {
-      return `Search unavailable (${e.message ?? String(e)}). Answering from internal knowledge.`;
-    }
+    
+    // Set pending to open WebScraper with the query
+    setPendingWebSearch(query);
+    
+    // Return instructions to use WebScraper
+    return JSON.stringify({
+      message: `Web Scraper opened for query: "${query}"`,
+      query: query,
+      instructions: "Use the Web Scraper to search, select pages, and save to vault. Then use RAG to query the saved content."
+    }, null, 2);
   }
 
   if (name === 'web_fetch') {
@@ -1151,6 +1121,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     return { enabledTools: initial };
   });
+
+  // WebScraper routing state
+  const [pendingWebSearch, setPendingWebSearch] = useState<string | null>(null);
 
   const [vault, setVault] = useState<VaultState>({
     vaultConnected: false,
@@ -1901,9 +1874,17 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
       // Use enhanced skill detection with confidence scoring and attachment awareness
       const { skill: matchedSkill } = detectSkillWithConfidence(content, attachments || []);
-      let effectiveSystemPrompt = matchedSkill
-        ? ((matchedSkill as unknown as { systemPrompt?: string }).systemPrompt || settings.systemPrompt)
-        : settings.systemPrompt;
+
+      // Check for personality override
+      let effectiveSystemPrompt = settings.systemPrompt;
+      if (personalityId) {
+        const personality = PERSONALITY_PRESETS.find(p => p.id === personalityId);
+        if (personality) {
+          effectiveSystemPrompt = personality.systemPrompt;
+        }
+      } else if (matchedSkill) {
+        effectiveSystemPrompt = ((matchedSkill as unknown as { systemPrompt?: string }).systemPrompt || settings.systemPrompt);
+      }
 
       // Add memory recall context if available
       if (memoryRecallContext) {
@@ -2749,6 +2730,9 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         resetLoop,
         setLoopState,
         setLoopPaused,
+        // WebScraper routing
+        pendingWebSearch,
+        setPendingWebSearch,
       }}
     >
       {children}

@@ -1,26 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useAppContext } from '../store/AppContext';
 import { SettingsPanel } from './SettingsPanel';
-import {
-  Plus,
-  MessageSquare,
-  Trash2,
-  ChevronDown,
-  ChevronUp,
-  Settings,
-  Cpu,
-  Bot,
-  Globe,
-  Search,
-  Pin,
-  Star,
-  MoreVertical,
-  Copy,
-  GitBranch,
-  Pencil,
-  Download,
-} from 'lucide-react';
-
+import { Plus, MessageSquare, Trash2, ChevronDown, ChevronUp, Settings, Cpu, Bot, Globe, Search, Pin, Star, MoreVertical, Copy, GitBranch, Pencil, Download, } from 'lucide-react';
 import logoUrl from '../assets/logo.jpg';
 
 // Error Boundary Component
@@ -46,10 +27,10 @@ class ErrorBoundary extends React.Component<
       return (
         <div className="p-4 text-center">
           <h3 className="text-red-400 font-semibold mb-2">Something went wrong</h3>
-          <p className="text-gray-500 text-sm mb-4">{this.state.error?.message}</p>
+          <p className="text-dark-500 text-sm mb-4">{this.state.error?.message}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+            className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-dark-100 rounded-lg"
           >
             Reload App
           </button>
@@ -115,7 +96,7 @@ export const Sidebar: React.FC = () => {
   const providerColors: Record<string, string> = {
     ollama: 'text-orange-400',
     lmstudio: 'text-purple-400',
-    openrouter: 'text-blue-400',
+    openrouter: 'text-cyan-400',
   };
 
   const statusColors: Record<string, string> = {
@@ -176,30 +157,29 @@ export const Sidebar: React.FC = () => {
       )}
 
       <div
-        className={`fixed lg:relative inset-y-0 left-0 z-40 flex flex-col bg-gray-950 border-r border-gray-800 transition-all duration-300 ${
-          isSidebarOpen ? 'w-80' : 'w-0 lg:w-16'
-        } overflow-hidden`}
+        className={`fixed lg:relative inset-y-0 left-0 z-40 flex flex-col glass border-r border-slime-500/10 transition-all duration-300 ${isSidebarOpen ? 'w-80' : 'w-0 lg:w-16'
+          } overflow-hidden`}
       >
         {!isSidebarOpen ? (
           /* Collapsed sidebar */
           <div className="w-16 flex flex-col items-center h-full min-w-[64px]">
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="p-3 mt-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              className="p-3 mt-3 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
               title="Open sidebar"
             >
               <MessageSquare size={20} />
             </button>
             <button
               onClick={() => createConversation()}
-              className="p-3 mt-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
               title="New chat"
             >
               <Plus size={20} />
             </button>
             <button
               onClick={() => setShowSettings(true)}
-              className="p-3 mt-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
               title="Settings"
             >
               <Settings size={20} />
@@ -208,26 +188,25 @@ export const Sidebar: React.FC = () => {
         ) : (
           <div className="flex flex-col h-full min-w-[320px]">
             {/* Header */}
-            <div className="p-4 border-b border-gray-800">
+            <div className="p-4 border-b border-dark-700/30">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <h2 className="text-lg font-bold text-dark-100 flex items-center gap-2">
                   <img src={logoUrl} alt="Logo" className="w-8 h-8 rounded object-cover" /> Slime AI
                 </h2>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setShowSettings(!showSettings)}
-                    className={`p-2 rounded-lg transition-colors ${
-                      showSettings
-                        ? 'bg-gray-800 text-white'
-                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                    }`}
+                    className={`p-2 rounded-lg transition-colors ${showSettings
+                        ? 'bg-dark-700/50 text-dark-100'
+                        : 'text-dark-500 hover:text-dark-100 hover:bg-dark-700/40'
+                      }`}
                     title="Settings"
                   >
                     <Settings size={18} />
                   </button>
                   <button
                     onClick={() => setIsSidebarOpen(false)}
-                    className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                    className="p-2 rounded-lg text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 transition-colors"
                   >
                     <ChevronDown size={18} className="rotate-90" />
                   </button>
@@ -237,7 +216,7 @@ export const Sidebar: React.FC = () => {
               {/* New Chat Button */}
               <button
                 onClick={() => createConversation()}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium text-dark-900 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 transition-all shadow-md shadow-slime-500/20 hover:shadow-slime-500/30 active:scale-[0.98]"
               >
                 <Plus size={18} />
                 New Chat
@@ -257,14 +236,14 @@ export const Sidebar: React.FC = () => {
                   <div className="relative">
                     <Search
                       size={14}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500"
                     />
                     <input
                       type="text"
                       placeholder="Search models..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      className="w-full pl-9 pr-3 py-2 bg-dark-900/70 border border-dark-700/40 rounded-lg text-sm text-dark-100 placeholder-dark-500 focus:outline-none focus:border-slime-500/35"
                     />
                   </div>
                 </div>
@@ -283,7 +262,7 @@ export const Sidebar: React.FC = () => {
                               <span className={providerColors[providerId]}>
                                 {providerIcons[providerId]}
                               </span>
-                              <span className="text-xs font-semibold text-gray-400">
+                              <span className="text-xs font-semibold text-dark-400">
                                 {provider.name}
                               </span>
                             </div>
@@ -291,11 +270,10 @@ export const Sidebar: React.FC = () => {
                               <button
                                 key={model.id}
                                 onClick={() => setActiveModel(model)}
-                                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors truncate ${
-                                  activeModel?.id === model.id
-                                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                                    : 'text-gray-300 hover:bg-gray-800'
-                                }`}
+                                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors truncate ${activeModel?.id === model.id
+                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30'
+                                    : 'text-dark-300 hover:bg-dark-700/40'
+                                  }`}
                               >
                                 {model.name}
                               </button>
@@ -304,7 +282,7 @@ export const Sidebar: React.FC = () => {
                         );
                       })}
                       {Object.keys(groupedModels).length === 0 && (
-                        <p className="text-sm text-gray-500 px-3 py-2">No models found</p>
+                        <p className="text-sm text-dark-500 px-3 py-2">No models found</p>
                       )}
                     </div>
                   ) : (
@@ -314,7 +292,7 @@ export const Sidebar: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <button
                             onClick={() => toggleProvider(provider.id)}
-                            className="flex-1 flex items-center justify-between px-2 py-2 text-xs font-semibold text-gray-400 hover:text-white transition-colors"
+                            className="flex-1 flex items-center justify-between px-2 py-2 text-xs font-semibold text-dark-400 hover:text-dark-100 transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <span className={providerColors[provider.id]}>
@@ -324,7 +302,7 @@ export const Sidebar: React.FC = () => {
                               <span
                                 className={`w-2 h-2 rounded-full ${statusColors[provider.status]}`}
                               />
-                              <span className="text-gray-600">
+                              <span className="text-dark-600">
                                 ({provider.models.length})
                               </span>
                             </div>
@@ -336,7 +314,7 @@ export const Sidebar: React.FC = () => {
                           </button>
                           <button
                             onClick={() => detectModels(provider.id)}
-                            className="p-1.5 text-gray-500 hover:text-white transition-colors"
+                            className="p-1.5 text-dark-500 hover:text-dark-100 transition-colors"
                             title="Refresh"
                           >
                             <svg
@@ -360,15 +338,14 @@ export const Sidebar: React.FC = () => {
                               <button
                                 key={model.id}
                                 onClick={() => setActiveModel(model)}
-                                className={`w-full text-left px-3 py-2 ml-4 rounded-md text-sm transition-colors truncate flex items-center gap-2 ${
-                                  activeModel?.id === model.id
-                                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                                    : 'text-gray-300 hover:bg-gray-800'
-                                }`}
+                                className={`w-full text-left px-3 py-2 ml-4 rounded-md text-sm transition-colors truncate flex items-center gap-2 ${activeModel?.id === model.id
+                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30'
+                                    : 'text-dark-300 hover:bg-dark-700/40'
+                                  }`}
                               >
                                 {model.name}
                                 {isFavorite && <Star size={10} className="text-yellow-400 fill-yellow-400" />}
-                                {isRecent && !isFavorite && <span className="text-xs text-gray-600">recent</span>}
+                                {isRecent && !isFavorite && <span className="text-xs text-dark-600">recent</span>}
                               </button>
                             );
                           })}
@@ -378,11 +355,11 @@ export const Sidebar: React.FC = () => {
                 </div>
 
                 {/* Conversations List */}
-                <div className="border-t border-gray-800">
+                <div className="border-t border-dark-700/30">
                   <div className="flex items-center justify-between px-3 py-2">
                     <button
                       onClick={() => toggleSection('conversations')}
-                      className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400"
+                      className="flex items-center gap-2 text-xs font-semibold text-dark-500 uppercase tracking-wider hover:text-dark-300"
                     >
                       {collapsedSections.has('conversations') ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
                       Recent Chats
@@ -400,14 +377,14 @@ export const Sidebar: React.FC = () => {
                           a.click();
                           URL.revokeObjectURL(url);
                         }}
-                        className="p-1 text-gray-500 hover:text-white transition-colors btn-press"
+                        className="p-1 text-dark-500 hover:text-dark-100 transition-colors btn-press"
                         title="Export all data"
                       >
                         <Download size={12} />
                       </button>
                       <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="p-1 text-gray-500 hover:text-white transition-colors btn-press"
+                        className="p-1 text-dark-500 hover:text-dark-100 transition-colors btn-press"
                         title="Import data"
                       >
                         <Download size={12} className="rotate-180" />
@@ -428,21 +405,21 @@ export const Sidebar: React.FC = () => {
                       />
                     </div>
                   </div>
-                  
+
                   {!collapsedSections.has('conversations') && (
                     <div className="flex-1 overflow-y-auto max-h-60 pb-2">
                       {sortedConversations.length === 0 ? (
-                        <p className="text-sm text-gray-600 px-3 py-4 text-center">
+                        <p className="text-sm text-dark-600 px-3 py-4 text-center">
                           No conversations yet
                         </p>
                       ) : (
                         sortedConversations.slice(0, 20).map((conv) => {
                           // Get last message preview
                           const lastMessage = conv.messages[conv.messages.length - 1];
-                          const lastMessagePreview = lastMessage?.content 
+                          const lastMessagePreview = lastMessage?.content
                             ? lastMessage.content.slice(0, 40).replace(/\n/g, ' ') + (lastMessage.content.length > 40 ? '...' : '')
                             : '';
-                          
+
                           // Relative time helper
                           const getRelativeTime = (timestamp: number) => {
                             const now = Date.now();
@@ -450,7 +427,7 @@ export const Sidebar: React.FC = () => {
                             const minutes = Math.floor(diff / 60000);
                             const hours = Math.floor(diff / 3600000);
                             const days = Math.floor(diff / 86400000);
-                            
+
                             if (minutes < 1) return 'Just now';
                             if (minutes < 60) return `${minutes}m ago`;
                             if (hours < 24) return `${hours}h ago`;
@@ -458,15 +435,14 @@ export const Sidebar: React.FC = () => {
                             if (days < 7) return `${days}d ago`;
                             return new Date(timestamp).toLocaleDateString();
                           };
-                          
+
                           return (
                             <div
                               key={conv.id}
-                              className={`group flex items-start gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer transition-colors hover-lift ${
-                                activeConversationId === conv.id
-                                  ? 'bg-gray-800 text-white'
-                                  : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
-                              } ${conv.isPinned ? 'bg-gray-800/30' : ''} ${swipedConvId === conv.id ? 'bg-red-900/30' : ''}`}
+                              className={`group sidebar-item flex items-start gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${activeConversationId === conv.id
+                                  ? 'active text-dark-100'
+                                  : 'text-dark-400 hover:text-dark-200'
+                                } ${conv.isPinned ? 'bg-slime-500/5' : ''} ${swipedConvId === conv.id ? 'bg-red-900/30' : ''}`}
                               onTouchStart={(e) => setTouchStartX(e.touches[0].clientX)}
                               onTouchEnd={(e) => {
                                 if (touchStartX === null) return;
@@ -486,24 +462,24 @@ export const Sidebar: React.FC = () => {
                                 className="flex-1 flex flex-col items-start gap-1 text-left min-w-0"
                               >
                                 <div className="flex items-center gap-2 w-full">
-                                  {conv.isPinned && <Pin size={10} className="text-blue-400 shrink-0" />}
+                                  {conv.isPinned && <Pin size={10} className="text-amber-400 shrink-0" />}
                                   <MessageSquare size={14} className="shrink-0 mt-0.5" />
                                   <span className="truncate text-sm font-medium">{conv.title}</span>
                                 </div>
                                 {lastMessagePreview && (
-                                  <span className="text-xs text-gray-600 truncate w-full pl-5">
+                                  <span className="text-xs text-dark-500 truncate w-full pl-5">
                                     {lastMessagePreview}
                                   </span>
                                 )}
-                                <span className="text-[10px] text-gray-600 pl-5">
+                                <span className="text-[10px] text-dark-600 pl-5">
                                   {getRelativeTime(conv.updatedAt)} • {conv.messages.length} msgs
                                 </span>
                               </button>
                               {/* Unread indicator (if new messages since last view) */}
                               {conv.messages.length > 0 && activeConversationId !== conv.id && (
-                                <span className="w-2 h-2 bg-blue-500 rounded-full shrink-0 mt-2" />
+                                <span className="w-2 h-2 bg-slime-500 rounded-full shrink-0 mt-2" />
                               )}
-                            
+
                               {/* Conversation menu */}
                               <div className="relative">
                                 <button
@@ -511,22 +487,22 @@ export const Sidebar: React.FC = () => {
                                     e.stopPropagation();
                                     setShowConvMenuId(showConvMenuId === conv.id ? null : conv.id);
                                   }}
-                                  className="p-1 opacity-0 group-hover:opacity-100 text-gray-500 hover:text-white transition-all btn-press"
+                                  className="p-1 opacity-0 group-hover:opacity-100 text-dark-500 hover:text-dark-100 transition-all btn-press"
                                 >
                                   <MoreVertical size={12} />
                                 </button>
-                               
+
                                 {showConvMenuId === conv.id && (
                                   <>
                                     <div className="fixed inset-0 z-40" onClick={() => setShowConvMenuId(null)} />
-                                    <div className="absolute right-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl min-w-32 dropdown-animate">
+                                    <div className="absolute right-0 top-full mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-lg shadow-xl min-w-32 dropdown-animate">
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           duplicateConversation(conv.id);
                                           setShowConvMenuId(null);
                                         }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 rounded-t-lg"
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 rounded-t-lg"
                                       >
                                         <Copy size={12} /> Duplicate
                                       </button>
@@ -537,7 +513,7 @@ export const Sidebar: React.FC = () => {
                                           setEditingTitle(conv.title);
                                           setShowConvMenuId(null);
                                         }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
                                       >
                                         <Pencil size={12} /> Rename
                                       </button>
@@ -547,7 +523,7 @@ export const Sidebar: React.FC = () => {
                                           togglePinConversation(conv.id);
                                           setShowConvMenuId(null);
                                         }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
                                       >
                                         <Pin size={12} /> {conv.isPinned ? 'Unpin' : 'Pin'}
                                       </button>
@@ -557,7 +533,7 @@ export const Sidebar: React.FC = () => {
                                           branchConversation(conv.messages[0]?.id || conv.id);
                                           setShowConvMenuId(null);
                                         }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
                                       >
                                         <GitBranch size={12} /> Branch
                                       </button>
@@ -567,7 +543,7 @@ export const Sidebar: React.FC = () => {
                                           exportConversation(conv.id, 'markdown');
                                           setShowConvMenuId(null);
                                         }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
                                       >
                                         <Download size={12} /> Export
                                       </button>
@@ -600,13 +576,13 @@ export const Sidebar: React.FC = () => {
         {/* Inline editing for conversation title */}
         {editingConvId && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 w-72">
-              <h3 className="text-white text-sm font-medium mb-3">Rename Chat</h3>
+            <div className="bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-xl p-4 w-72">
+              <h3 className="text-dark-100 text-sm font-medium mb-3">Rename Chat</h3>
               <input
                 type="text"
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
-                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                className="w-full bg-dark-900 border border-dark-700/50 rounded-lg px-3 py-2 text-dark-100 text-sm focus:outline-none focus:border-slime-500/40"
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -624,13 +600,13 @@ export const Sidebar: React.FC = () => {
                     renameConversation(editingConvId, editingTitle);
                     setEditingConvId(null);
                   }}
-                  className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
+                  className="flex-1 px-3 py-1.5 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 text-dark-900 text-xs rounded-lg font-medium"
                 >
                   Save
                 </button>
                 <button
                   onClick={() => setEditingConvId(null)}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg"
+                  className="px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-dark-100 text-xs rounded-lg"
                 >
                   Cancel
                 </button>

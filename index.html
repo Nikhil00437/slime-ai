@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Performance: preconnect to local APIs -->
+    <link rel="preconnect" href="http://localhost:1234" />
+    <link rel="preconnect" href="http://localhost:11434" />
+    <link rel="dns-prefetch" href="http://localhost:1234" />
+    <link rel="dns-prefetch" href="http://localhost:11434" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' http://localhost:* https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://api.x.ai https://openrouter.ai https://api.exa.ai https:; media-src 'self' blob:; worker-src 'self' blob:;" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Slime AI — Ollama • LM Studio • OpenRouter</title>

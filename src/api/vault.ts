@@ -2,6 +2,7 @@ import { Conversation, ChatMessage } from '../types';
 
 const CHATS_FOLDER = 'chats';
 const MEMORY_FOLDER = 'memory';
+const WEBSCRAPER_FOLDER = 'webscrape';
 const DB_NAME = 'Slime-vault';
 const DB_VERSION = 1;
 const HANDLE_STORE = 'handles';
@@ -144,6 +145,11 @@ async function ensureFoldersExist(handle: FileSystemDirectoryHandle): Promise<vo
   } catch (e) {
     console.warn('Could not create memory folder:', e);
   }
+  try {
+    await handle.getDirectoryHandle(WEBSCRAPER_FOLDER, { create: true });
+  } catch (e) {
+    console.warn('Could not create webscrape folder:', e);
+  }
 }
 
 async function getOrCreateFolder(
@@ -216,7 +222,19 @@ function conversationToMarkdown(conv: Conversation): string {
       }
       lines.push('');
     }
-    
+
+    // Save toolCalls if present
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      lines.push(`[toolCalls: ${JSON.stringify(msg.toolCalls)}]`);
+      lines.push('');
+    }
+
+    // Save toolCallId for tool result messages
+    if (msg.toolCallId) {
+      lines.push(`[toolCallId: ${msg.toolCallId}]`);
+      lines.push('');
+    }
+
     lines.push(msg.content);
     lines.push('');
   }
@@ -266,10 +284,11 @@ function markdownToConversation(
     let modelIndex = 0;
     
     for (const section of sections) {
-      const match = section.match(/^(User|Assistant)\s*\(([^)]+)\)\n([\s\S]*)$/);
+      // Match User, Assistant, or Tool roles
+      const match = section.match(/^(User|Assistant|Tool)\s*\(([^)]+)\)\n([\s\S]*)$/);
       if (match) {
-        const role = match[1].toLowerCase() as 'user' | 'assistant';
-        
+        const role = match[1].toLowerCase() as 'user' | 'assistant' | 'tool';
+
         // If assistant message and we have a models array, use the next model
         // Otherwise use the default model
         let messageModel = String(frontmatter.model || '');
@@ -277,14 +296,44 @@ function markdownToConversation(
           messageModel = modelArray[modelIndex] || messageModel;
           modelIndex = (modelIndex + 1) % modelArray.length; // Cycle through models
         }
-        
+
+        const sectionContent = match[3].trim();
+
+        // Extract toolCalls if present (handles both objects and arrays)
+        let toolCalls: any[] | undefined;
+        const toolCallsMatch = sectionContent.match(/\[toolCalls:\s*(\{.*?\}|\[.*?\])/s);
+        if (toolCallsMatch) {
+          try {
+            const parsed = JSON.parse(toolCallsMatch[1]);
+            // Ensure it's an array
+            toolCalls = Array.isArray(parsed) ? parsed : [parsed];
+          } catch {
+            // Invalid JSON, ignore
+          }
+        }
+
+        // Extract toolCallId if present
+        let toolCallId: string | undefined;
+        const toolCallIdMatch = sectionContent.match(/\[toolCallId:\s*(.+?)\]/s);
+        if (toolCallIdMatch) {
+          toolCallId = toolCallIdMatch[1].trim();
+        }
+
+        // Remove the toolCalls and toolCallId markers from content
+        let cleanContent = sectionContent
+          .replace(/\[toolCalls:\s*(\{.*?\}|\[.*?\])\]/gs, '')
+          .replace(/\[toolCallId:\s*.*?\]/gs, '')
+          .trim();
+
         messages.push({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           role,
-          content: match[3].trim(),
+          content: cleanContent,
           model: messageModel,
           provider: (frontmatter.provider as any) || 'ollama',
           timestamp: new Date(match[2]).getTime(),
+          toolCalls,
+          toolCallId,
         });
       }
     }
@@ -666,4 +715,175 @@ export async function loadSkillsFromVault(): Promise<any[]> {
 
 export function getVaultName(): string | null {
   return vaultHandle?.name || null;
+}
+
+/* ── Web Scraper Storage ── */
+
+export interface WebScrapedPage {
+  title: string;
+  url: string;
+  snippet: string;
+  content: string;
+  scrapedAt: string;
+  query: string;
+}
+
+export async function saveScrapedPagesToVault(
+  pages: WebScrapedPage[],
+  query: string
+): Promise<boolean> {
+  const handle = await restoreVaultHandle();
+  if (!handle) return false;
+
+  try {
+    const webscrapeFolder = await getOrCreateFolder(handle, WEBSCRAPER_FOLDER);
+    
+    // Create filename based on query and timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeQuery = query.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+    const fileName = `${safeQuery}_${timestamp}.md`;
+    
+    // Generate markdown content
+    const lines: string[] = [
+      `---`,
+      `query: "${query}"`,
+      `savedAt: ${Date.now()}`,
+      `pages: ${pages.length}`,
+      `---`,
+      ``,
+      `# Search Results: "${query}"`,
+      ``,
+      `**Date:** ${new Date().toISOString()}`,
+      `**Pages:** ${pages.length}`,
+      ``,
+      `---`,
+      ``,
+    ];
+    
+    pages.forEach((p, i) => {
+      lines.push(`## ${i + 1}. ${p.title}`);
+      lines.push(``);
+      lines.push(`**URL:** <${p.url}>`);
+      lines.push(`**Scraped:** ${p.scrapedAt}`);
+      lines.push(``);
+      lines.push(`### Content`);
+      lines.push(``);
+      lines.push(p.content);
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    });
+    
+    const fileHandle = await webscrapeFolder.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(lines.join('\n'));
+    await writable.close();
+    return true;
+  } catch (err) {
+    console.error('Failed to save scraped pages to vault:', err);
+    return false;
+  }
+}
+
+export async function loadScrapedPagesFromVault(): Promise<{ query: string; pages: WebScrapedPage[]; savedAt: number; fileName: string }[]> {
+  const handle = await restoreVaultHandle();
+  if (!handle) return [];
+
+  try {
+    const webscrapeFolder = await getOrCreateFolder(handle, WEBSCRAPER_FOLDER);
+    const scrapedData: { query: string; pages: WebScrapedPage[]; savedAt: number; fileName: string }[] = [];
+
+    for await (const entry of (webscrapeFolder as any).values()) {
+      if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+        try {
+          const file = await entry.getFile();
+          const content = await file.text();
+          
+          // Extract frontmatter
+          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+          if (!frontmatterMatch) continue;
+          
+          let query = '';
+          let savedAt = 0;
+          let pageCount = 0;
+          
+          const fmLines = frontmatterMatch[1].split('\n');
+          for (const line of fmLines) {
+            if (line.startsWith('query:')) {
+              query = line.replace('query:', '').trim().replace(/^["']|["']$/g, '');
+            } else if (line.startsWith('savedAt:')) {
+              savedAt = parseInt(line.replace('savedAt:', '').trim(), 10);
+            } else if (line.startsWith('pages:')) {
+              pageCount = parseInt(line.replace('pages:', '').trim(), 10);
+            }
+          }
+          
+          // Parse pages from markdown sections
+          const pages: WebScrapedPage[] = [];
+          const sections = content.split(/^##\s+\d+\.\s+/m).filter(Boolean);
+          
+          for (const section of sections) {
+            if (!section.trim()) continue;
+            
+            // Extract URL from **URL:** <...>
+            const urlMatch = section.match(/\*\*URL:\*\*\s*<(.+)>/);
+            const scrapedAtMatch = section.match(/\*\*Scraped:\*\*\s*(.+)/);
+            
+            // Get title from first line (after ##)
+            const titleMatch = section.match(/^#?\s*(.+?)(?:\n|$)/);
+            const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
+            
+            // Get content between "### Content" and next "---"
+            const contentMatch = section.match(/### Content\s*\n\n([\s\S]*?)(?=\n---|\n##|\n*$)/);
+            const pageContent = contentMatch ? contentMatch[1].trim() : '';
+            
+            // Generate snippet from first 200 chars of content
+            const snippet = pageContent.slice(0, 200).replace(/[#*]/g, '').trim();
+            
+            if (urlMatch) {
+              pages.push({
+                title,
+                url: urlMatch[1],
+                snippet,
+                content: pageContent,
+                scrapedAt: scrapedAtMatch ? scrapedAtMatch[1].trim() : new Date().toISOString(),
+                query,
+              });
+            }
+          }
+          
+          if (pages.length > 0) {
+            scrapedData.push({
+              query: query || entry.name.replace('.md', ''),
+              pages,
+              savedAt: savedAt || file.lastModified,
+              fileName: entry.name,
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to read scraped file:', entry.name, err);
+        }
+      }
+    }
+
+    // Sort by savedAt descending (newest first)
+    return scrapedData.sort((a, b) => b.savedAt - a.savedAt);
+  } catch (err) {
+    console.error('Failed to load scraped pages from vault:', err);
+    return [];
+  }
+}
+
+export async function deleteScrapedFileFromVault(fileName: string): Promise<boolean> {
+  const handle = await restoreVaultHandle();
+  if (!handle) return false;
+
+  try {
+    const webscrapeFolder = await getOrCreateFolder(handle, WEBSCRAPER_FOLDER);
+    await webscrapeFolder.removeEntry(fileName);
+    return true;
+  } catch (err) {
+    console.error('Failed to delete scraped file from vault:', err);
+    return false;
+  }
 }

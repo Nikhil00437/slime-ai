@@ -21,6 +21,8 @@ import {
   Clock,
   Database,
   FileText,
+  Bug,
+  Brain,
 } from 'lucide-react';
 
 interface HelpSection {
@@ -83,18 +85,18 @@ export const HelpPalette: React.FC<HelpPaletteProps> = ({ isOpen, onClose }) => 
       onClick={onClose}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="absolute inset-0 cmd-backdrop" />
 
       {/* Help Palette */}
       <div
-        className="relative w-full max-w-4xl h-[80vh] bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl overflow-hidden animate-scale-in flex"
+        className="relative w-full max-w-4xl h-[80vh] bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-2xl shadow-2xl overflow-hidden animate-scale-in flex"
         onClick={e => e.stopPropagation()}
       >
         {/* Left Sidebar - Navigation */}
-        <div className="w-72 border-r border-gray-800 flex flex-col bg-gray-950/50">
+        <div className="w-72 border-r border-dark-700/40 flex flex-col bg-dark-900/50">
           {/* Search */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800">
-            <Search size={16} className="text-gray-500" />
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-dark-700/40">
+            <Search size={16} className="text-dark-500" />
             <input
               ref={inputRef}
               type="text"
@@ -102,7 +104,7 @@ export const HelpPalette: React.FC<HelpPaletteProps> = ({ isOpen, onClose }) => 
               onChange={e => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Search help..."
-              className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none text-sm"
+              className="flex-1 bg-transparent text-dark-100 placeholder-dark-500 focus:outline-none text-sm"
             />
           </div>
 
@@ -114,21 +116,21 @@ export const HelpPalette: React.FC<HelpPaletteProps> = ({ isOpen, onClose }) => 
                 onClick={() => setSelectedSection(s.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors mb-1 ${
                   selectedSection === s.id
-                    ? 'bg-blue-600/20 text-blue-400'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                    ? 'cmd-selected text-slime-400'
+                    : 'text-dark-400 hover:bg-dark-700/40 hover:text-dark-200'
                 }`}
               >
-                <span className={selectedSection === s.id ? 'text-blue-400' : 'text-gray-500'}>
+                <span className={selectedSection === s.id ? 'text-slime-400' : 'text-dark-500'}>
                   {s.icon}
                 </span>
                 <span className="text-sm flex-1">{s.title}</span>
-                {selectedSection === s.id && <ChevronRight size={14} className="text-blue-400" />}
+                {selectedSection === s.id && <ChevronRight size={14} className="text-slime-400" />}
               </button>
             ))}
           </div>
 
           {/* Footer */}
-          <div className="px-4 py-3 border-t border-gray-800 text-xs text-gray-500">
+          <div className="px-4 py-3 border-t border-dark-700/40 text-xs text-dark-500">
             <div className="flex items-center gap-2">
               <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">H</kbd>
               <span>to toggle</span>
@@ -226,6 +228,18 @@ function getHelpSections(): HelpSection[] {
       title: 'File Attachments',
       icon: <FileText size={16} />,
       content: <FileAttachmentsSection />,
+    },
+    {
+      id: 'webscraper',
+      title: 'Web Scraper',
+      icon: <Bug size={16} />,
+      content: <WebScraperSection />,
+    },
+    {
+      id: 'rag',
+      title: 'RAG System',
+      icon: <Brain size={16} />,
+      content: <RAGSection />,
     },
     {
       id: 'settings',
@@ -1208,6 +1222,186 @@ function SettingsCategory({ title, items }: { title: string; items: { name: stri
             <p className="text-xs text-gray-500 mt-0.5">{item.description}</p>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function WebScraperSection() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
+          <Bug size={22} className="text-violet-400" />
+          Web Scraper
+        </h2>
+        <p className="text-gray-400 text-sm">Search the web and scrape pages for AI context</p>
+      </div>
+
+      <div className="bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border border-violet-500/20 rounded-xl p-5">
+        <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+          <Zap size={18} className="text-yellow-400" />
+          What is Web Scraper?
+        </h3>
+        <p className="text-sm text-gray-300 mb-3">
+          Search the web for information, select specific pages to scrape, and save them for AI context.
+          Use saved pages in RAG queries for detailed information retrieval.
+        </p>
+        <ul className="space-y-2 text-sm text-gray-400">
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-violet-400" />
+            Search for any topic on the web
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-violet-400" />
+            Select specific pages before scraping
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-violet-400" />
+            Save scraped data to vault as Markdown
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-violet-400" />
+            Use saved pages in RAG queries
+          </li>
+        </ul>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-white font-semibold">How to Use</h3>
+        <ol className="space-y-3 text-sm">
+          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold shrink-0">1</span>
+            <div>
+              <strong className="text-white">Search</strong>
+              <p className="text-gray-400 text-xs mt-1">Enter a search query and click Search to find web pages</p>
+            </div>
+          </li>
+          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold shrink-0">2</span>
+            <div>
+              <strong className="text-white">Select Pages</strong>
+              <p className="text-gray-400 text-xs mt-1">Click "Select Pages" to choose which results to scrape</p>
+            </div>
+          </li>
+          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold shrink-0">3</span>
+            <div>
+              <strong className="text-white">Scrape</strong>
+              <p className="text-gray-400 text-xs mt-1">Click "Scrape X Pages" to fetch content from selected sites</p>
+            </div>
+          </li>
+          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold shrink-0">4</span>
+            <div>
+              <strong className="text-white">Save to Vault</strong>
+              <p className="text-gray-400 text-xs mt-1">Click "Save to Vault" to store as .md files in vault/webscrape/</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+        <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
+          <Brain size={16} className="text-indigo-400" />
+          RAG Integration
+        </h3>
+        <p className="text-sm text-gray-400">
+          After saving, go to the RAG tab to query your scraped pages. The RAG system uses TF-IDF 
+          to find relevant chunks from your saved documents based on your questions.
+        </p>
+      </div>
+
+      <div className="bg-yellow-600/10 border border-yellow-500/20 rounded-xl p-4">
+        <p className="text-sm text-yellow-300">
+          <strong>Note:</strong> Scraped pages are saved as Markdown files to your vault's 
+          vault/webscrape/ folder. You can also manually edit these files.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RAGSection() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
+          <Brain size={22} className="text-indigo-400" />
+          RAG System
+        </h2>
+        <p className="text-gray-400 text-sm">Retrieval-Augmented Generation over your scraped data</p>
+      </div>
+
+      <div className="bg-gradient-to-r from-indigo-600/10 to-cyan-600/10 border border-indigo-500/20 rounded-xl p-5">
+        <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+          <Layers size={18} className="text-indigo-400" />
+          How RAG Works
+        </h3>
+        <p className="text-sm text-gray-300 mb-3">
+          RAG (Retrieval-Augmented Generation) lets you ask questions about your scraped web pages.
+          It uses TF-IDF vector search to find the most relevant passages.
+        </p>
+        <ul className="space-y-2 text-sm text-gray-400">
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-indigo-400" />
+            <strong className="text-white">Chunking:</strong> Pages are split into ~400 char chunks
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-indigo-400" />
+            <strong className="text-white">Indexing:</strong> TF-IDF builds vocabulary and document vectors
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-indigo-400" />
+            <strong className="text-white">Retrieval:</strong> Query matched against indexed chunks
+          </li>
+          <li className="flex items-center gap-2">
+            <ChevronRight size={14} className="text-indigo-400" />
+            <strong className="text-white">Results:</strong> Top matches shown with relevance scores
+          </li>
+        </ul>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-white font-semibold">Using RAG</h3>
+        <div className="bg-gray-800/30 rounded-xl border border-gray-700 p-4 space-y-3 text-sm">
+          <div className="flex items-start gap-3">
+            <FileText size={14} className="text-blue-400 mt-1" />
+            <div>
+              <strong className="text-white">Saved Scrapes</strong>
+              <p className="text-gray-400 text-xs mt-1">Click the saved scrape buttons to load documents for querying</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Search size={14} className="text-green-400 mt-1" />
+            <div>
+              <strong className="text-white">Ask Questions</strong>
+              <p className="text-gray-400 text-xs mt-1">Type a question and press Enter to find relevant chunks</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Star size={14} className="text-yellow-400 mt-1" />
+            <div>
+              <strong className="text-white">View Results</strong>
+              <p className="text-gray-400 text-xs mt-1">Results show source document, chunk number, and relevance score</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-white font-semibold">Sample Documents</h3>
+        <p className="text-sm text-gray-400">
+          When no scraped data is available, RAG uses sample documents about Machine Learning, 
+          Python, and Web Development for demonstration purposes.
+        </p>
+      </div>
+
+      <div className="bg-blue-600/10 border border-blue-500/20 rounded-xl p-4">
+        <p className="text-sm text-gray-300">
+          Use <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">K</kbd> and type "web scraper" or "rag" 
+          to quickly open these features from anywhere.
+        </p>
       </div>
     </div>
   );
