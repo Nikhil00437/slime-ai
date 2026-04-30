@@ -37,27 +37,53 @@ export async function detectOllamaModels(baseUrl: string): Promise<ModelInfo[]> 
 }
 
 export async function detectLMStudioModels(baseUrl: string): Promise<ModelInfo[]> {
-  try {
-    const normalized = normalizeBaseUrl(baseUrl);
-    const url = normalized.endsWith('/v1') ? `${normalized}/models` : `${normalized}/v1/models`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.data || []).map((m: any) => ({
-      id: m.id,
-      name: m.id,
-      provider: 'lmstudio' as ProviderType,
-      capabilities: {
-        text: true,
-        image: false,
-        audio: false,
-        video: false,
-        fileUpload: false,
-      },
-    }));
-  } catch {
-    return [];
+  const normalized = normalizeBaseUrl(baseUrl);
+
+  // Try multiple possible endpoints for LM Studio
+  const endpoints = [
+    `${normalized}/v1/models`,
+    `${normalized}/models`,
+    `${normalized}/api/models`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+
+      // Handle different response formats
+      let models: any[] = [];
+      if (Array.isArray(data)) {
+        models = data;
+      } else if (data.data && Array.isArray(data.data)) {
+        models = data.data;
+      } else if (data.models && Array.isArray(data.models)) {
+        models = data.models;
+      }
+
+      if (models.length > 0) {
+        return models.map((m: any) => ({
+          id: m.id || m.name || m,
+          name: m.name || m.id || m,
+          provider: 'lmstudio' as ProviderType,
+          capabilities: {
+            text: true,
+            image: false,
+            audio: false,
+            video: false,
+            fileUpload: false,
+          },
+        }));
+      }
+    } catch {
+      // Try next endpoint
+      continue;
+    }
   }
+
+  return [];
 }
 
 export async function detectOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
@@ -290,8 +316,22 @@ export async function checkProviderHealth(
         break;
       case 'lmstudio': {
         const normalized = normalizeBaseUrl(baseUrl);
-        url = normalized.endsWith('/v1') ? `${normalized}/models` : `${normalized}/v1/models`;
-        break;
+        // Try both possible endpoints
+        const endpoints = [
+          normalized.endsWith('/v1') ? `${normalized}/models` : `${normalized}/v1/models`,
+          `${normalized}/models`,
+          `${normalized}/api/models`,
+        ];
+        // Try each endpoint
+        for (const endpoint of endpoints) {
+          try {
+            const res = await fetch(endpoint, { signal: AbortSignal.timeout(5000) });
+            if (res.ok) return true;
+          } catch {
+            continue;
+          }
+        }
+        return false;
       }
       case 'openrouter':
         url = `${baseUrl}/models`;
@@ -548,7 +588,11 @@ export async function streamChatCompletion(
         const lines = chunk.split('\n');
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.includes('message_stop')) {
+          // Skip empty lines - don't trigger onComplete
+          if (!trimmed) continue;
+
+          // Handle message_stop event for completion
+          if (trimmed.includes('message_stop')) {
               // Try to extract usage from message_stop event
               try {
                 const parsed = JSON.parse(trimmed.slice(6));
@@ -874,7 +918,18 @@ try {
     }
     buffer = lines[lines.length - 1];
   }
-  
+
+  // Flush any remaining buffer (last line that wasn't processed)
+  if (buffer.trim() && buffer.trim() !== '[DONE]') {
+    try {
+      const line = buffer.trim().replace(/^data:\s*/, '');
+      const parsed = JSON.parse(line);
+      if (parsed.choices?.[0]?.delta?.content) {
+        callbacks?.onChunk(parsed.choices[0].delta.content);
+      }
+    } catch {}
+  }
+
   callbacks?.onComplete(finalUsage ? {
     inputTokens: finalUsage.prompt_tokens || 0,
     outputTokens: finalUsage.completion_tokens || 0,

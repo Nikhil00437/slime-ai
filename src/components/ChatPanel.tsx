@@ -205,7 +205,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
 
   // Skill auto-detection and suggestion when input changes
   useEffect(() => {
-    if (!input.trim() || input.length < 5) {
+    if (!input.trim() || input.length < 3) {
       if (suggestedSkill) {
         setSuggestedSkill(null);
       }
@@ -231,29 +231,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
 
   const handleSubmit = async () => {
     const trimmed = input.trim();
-    if (!trimmed && attachments.length === 0 || isLoading || !activeModel) return;
-    
+    // Clear guard with proper operator precedence
+    if ((!trimmed && attachments.length === 0) || isLoading || !activeModel) return;
+
     // Clear draft on send
     if (activeConversationId) {
       localStorage.removeItem(`mm_draft_${activeConversationId}`);
     }
-    
-    // Add to input history
-    if (!trimmed && attachments.length === 0 || isLoading || !activeModel) return;
-    
-    // Auto-create conversation if none exists
+
+    // Auto-create conversation if none exists and capture the ID
+    let convId = activeConversationId;
     if (!activeConversation) {
-      createConversation(activeModel.id, activeModel.provider);
+      convId = createConversation(activeModel.id, activeModel.provider);
     }
-    
+
     // Add to input history
     addToInputHistory(trimmed);
-    
+
     setInput('');
     // Reset history navigation on new message
     const currentAttachments = [...attachments];
     setAttachments([]);
-    await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined);
+    await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined, convId);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

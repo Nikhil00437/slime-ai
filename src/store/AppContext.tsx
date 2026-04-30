@@ -134,7 +134,7 @@ interface AppContextType extends AppState {
   createConversation: (modelId?: string, provider?: ProviderType) => string;
   setActiveConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
-  sendMessage: (content: string, attachments?: Attachment[], personalityId?: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: Attachment[], personalityId?: string, conversationIdOverride?: string) => Promise<void>;
   stopStreaming: () => void;
   detectModels: (providerId: ProviderType) => Promise<void>;
   updateProvider: (id: ProviderType, updates: Partial<Provider>) => void;
@@ -1495,7 +1495,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : p
       )
     );
-  }, [providers]);
+
+    // Auto-select first available model if none selected
+    if (models.length > 0 && !activeModel) {
+      setActiveModel(models[0]);
+    }
+  }, [providers, activeModel]);
 
   const createConversation = useCallback(
     (modelId?: string, provider?: ProviderType) => {
@@ -1567,10 +1572,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [activeConversationId, conversations]
   );
 
-  const sendMessage = useCallback(
-    async (content: string, attachments?: Attachment[]) => {
+const sendMessage = useCallback(
+    async (content: string, attachments?: Attachment[], personalityId?: string, conversationIdOverride?: string) => {
       // ✅ Day 1: Validation checks
-      if (!activeModel || !activeConversationId) return;
+      const targetConvId = conversationIdOverride ?? activeConversationId;
+      if (!activeModel || !targetConvId) return;
       
       // Double-submit prevention
       const submitCheck = checkSubmitAllowed();
@@ -1644,7 +1650,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === activeConversationId
+          c.id === targetConvId
             ? {
                 ...c,
                 messages: [...c.messages, userMessage],
@@ -1664,8 +1670,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const conv = conversations.find((c) => c.id === activeConversationId);
-      const initialContextMessages = conv ? [...conv.messages, userMessage] : [userMessage];
+      // Get the conversation directly from state - don't rely on setConversations callback
+      const currentConv = conversations.find((c) => c.id === targetConvId);
+      const initialContextMessages = currentConv 
+        ? [...currentConv.messages, userMessage] 
+        : [userMessage];
 
       // File upload validation (Day 9)
       if (attachments && attachments.length > 0) {
@@ -1691,6 +1700,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // Auto-recall relevant memory if enabled for this conversation
       let memoryRecallContext = '';
+      const conv = conversations.find((c) => c.id === targetConvId);
       if (conv?.memoryEnabled) {
         const keywords = extractMemoryKeywords(content);
         if (keywords.length > 0) {
@@ -1940,7 +1950,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
         setConversations((prev) =>
           prev.map((c) =>
-            c.id === activeConversationId
+            c.id === targetConvId
               ? { ...c, messages: [...c.messages, loopAssistantMessage] }
               : c
           )
@@ -1972,7 +1982,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                 assistantResponseContent += text;
                 setConversations((prev) =>
                   prev.map((c) =>
-                    c.id === activeConversationId
+                    c.id === targetConvId
                       ? {
                           ...c,
                           messages: c.messages.map((m) =>
@@ -2006,7 +2016,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                 const responseTime = Date.now() - requestStartTime;
                 setConversations((prev) =>
                   prev.map((c) =>
-                    c.id === activeConversationId
+                    c.id === targetConvId
                       ? {
                           ...c,
                           messages: c.messages.map((m) =>
@@ -2054,7 +2064,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
                   // Create agent step entry
                   const currentStep = loopCount + 1;
-                  setConversations(prev => prev.map(c => c.id === activeConversationId ? {
+                  setConversations(prev => prev.map(c => c.id === targetConvId ? {
                     ...c,
                     messages: c.messages.map(m => m.id === loopAssistantMessageId ? { ...m, toolCalls: parsedToolCalls } : m),
                     agentSteps: [
@@ -2083,11 +2093,11 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                   }));
 
                   // Update agent step with results
-                  setConversations(prev => prev.map(c => c.id === activeConversationId ? {
+                  setConversations(prev => prev.map(c => c.id === targetConvId ? {
                     ...c,
                     messages: [...c.messages, ...results],
-                    agentSteps: (c.agentSteps || []).map((step, idx) => 
-                      idx === (c.agentSteps || []).length - 1 
+                    agentSteps: (c.agentSteps || []).map((step, idx) =>
+                      idx === (c.agentSteps || []).length - 1
                         ? { ...step, toolResults: results }
                         : step
                     )
