@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { AppProvider, useAppContext } from './store/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
-import { SkillForge } from './slime/SkillForge';
 import WebScraper from './components/WebScraper';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { HelpPalette, useHelpPalette } from './components/HelpPalette';
-import { MessageSquare, FlaskConical, Command, HelpCircle, Bug } from 'lucide-react';
+import { SidebarManager, AssistantSidebarContent } from './components/SidebarManager';
+import { MessageSquare, Command, HelpCircle, Bug } from 'lucide-react';
 import { ToastProvider } from './components/Toast';
 import { initFavicon, setFaviconStatus } from './utils/favicon';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -56,14 +56,19 @@ function AmbientBackground() {
   );
 }
 
-type Tab = 'chat' | 'forge' | 'scraper';
+type Tab = 'chat' | 'scraper';
 
 function AppContent() {
   const { error, setError, isLoading, pendingWebSearch, setPendingWebSearch } = useAppContext();
   const [showError, setShowError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('chat');
+  const [tab, setTab] = useState<'chat' | 'scraper'>('chat');
   const { isOpen: isCommandPaletteOpen, setIsOpen: setCommandPaletteOpen } = useCommandPalette();
   const { isOpen: isHelpOpen, setIsOpen: setHelpOpen } = useHelpPalette();
+
+  // Right sidebar state (for thinking/processing/coding panels)
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [rightSidebarContent, setRightSidebarContent] = useState<AssistantSidebarContent | undefined>(undefined);
+  const [rightSidebarStreaming, setRightSidebarStreaming] = useState(false);
 
   // Helper to open web scraper
   const openWebScraper = (query?: string) => {
@@ -124,7 +129,6 @@ function AppContent() {
           flexShrink: 0,
         }}>
           <TabBtn active={tab === 'chat'} onClick={() => setTab('chat')} icon={<MessageSquare size={14} />} label="Chat" />
-          <TabBtn active={tab === 'forge'} onClick={() => setTab('forge')} icon={<FlaskConical size={14} />} label="Skill Forge" accent />
           <TabBtn active={tab === 'scraper'} onClick={() => setTab('scraper')} icon={<Bug size={14} />} label="Web Scraper" />
           
           {/* Command Palette Trigger */}
@@ -154,9 +158,35 @@ function AppContent() {
             className="animate-fade-in"
             style={{ animationDuration: '200ms' }}
           >
-            {tab === 'chat' ? <ChatPanel onOpenScraper={() => setTab('scraper')} /> : tab === 'forge' ? <SkillForge /> : <WebScraper />}
+            {tab === 'chat' ? (
+              <ChatPanel
+                onOpenScraper={() => setTab('scraper')}
+                rightSidebarOpen={rightSidebarOpen}
+                onRightSidebarOpen={setRightSidebarOpen}
+                onRightSidebarContentChange={setRightSidebarContent}
+                onRightSidebarStreamingChange={setRightSidebarStreaming}
+              />
+            ) : tab === 'forge' ? null : <WebScraper />}
           </div>
         </div>
+      </div>
+
+      {/* Right Sidebar - Proper sliding sidebar for thinking/processing/coding */}
+      <div className={`right-sidebar-container ${rightSidebarOpen ? 'open' : ''}`}>
+        <SidebarManager
+          content={rightSidebarContent}
+          onClose={() => setRightSidebarOpen(false)}
+          isStreaming={rightSidebarStreaming}
+          compact={false}
+          onBlockChange={(block) => {
+            if (rightSidebarContent) {
+              setRightSidebarContent({
+                ...rightSidebarContent,
+                activeBlock: block,
+              });
+            }
+          }}
+        />
       </div>
 
       {/* Command Palette */}

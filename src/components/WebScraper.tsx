@@ -455,96 +455,87 @@ if __name__ == "__main__":
     main()
 `;
 
-/* ── Mock helpers ── */
-const SITES = [
-  { name: "Wikipedia", domain: "en.wikipedia.org", prefix: "wiki" },
-  { name: "Mozilla MDN", domain: "developer.mozilla.org", prefix: "en-US/docs" },
-  { name: "Stack Overflow", domain: "stackoverflow.com", prefix: "questions/tagged" },
-  { name: "GeeksforGeeks", domain: "www.geeksforgeeks.org", prefix: "article" },
-  { name: "Medium", domain: "medium.com", prefix: "" },
-  { name: "IBM Developer", domain: "developer.ibm.com", prefix: "articles" },
-  { name: "MIT OCW", domain: "ocw.mit.edu", prefix: "courses" },
-  { name: "Coursera", domain: "www.coursera.org", prefix: "learn" },
-];
-
-function titleCase(s: string): string {
-  return s.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function generateMockResults(query: string): SearchResult[] {
-  const slug = query.toLowerCase().replace(/\s+/g, "_");
-  const tc = titleCase(query);
-  const templates: ((q: string, s: any) => SearchResult)[] = [
-    (q, s) => ({
-      title: `${tc} — ${s.name}`,
-      url: `https://${s.domain}/${s.prefix}/${slug}`,
-      snippet: `A comprehensive overview of ${q.toLowerCase()} covering history, key concepts, applications, and current research directions.`,
-    }),
-    (q) => ({
-      title: `Understanding ${tc}: A Complete Guide`,
-      url: `https://example.com/guides/${slug}`,
-      snippet: `Learn everything about ${q.toLowerCase()} — from fundamentals to advanced topics. Includes real-world examples and best practices.`,
-    }),
-    (q) => ({
-      title: `${tc} Tutorial — Step by Step`,
-      url: `https://tutorial.example.com/${slug}`,
-      snippet: `Hands-on tutorial for ${q.toLowerCase()}. Build real projects while learning core principles and techniques.`,
-    }),
-    (_q) => ({
-      title: `What Is ${tc}? Definition & Meaning`,
-      url: `https://dictionary.example.com/term/${slug}`,
-      snippet: `${tc} refers to a broad area of study and practice. This article defines the term and explores its significance in modern contexts.`,
-    }),
-    (q) => ({
-      title: `Latest Research in ${tc} (2024–2025)`,
-      url: `https://research.example.com/papers/${slug}`,
-      snippet: `Recent breakthroughs and publications related to ${q.toLowerCase()}. Peer-reviewed findings and expert analysis.`,
-    }),
-    (q) => ({
-      title: `${tc} Best Practices & Common Pitfalls`,
-      url: `https://blog.example.com/${slug}-best-practices`,
-      snippet: `Avoid common mistakes when working with ${q.toLowerCase()}. Expert tips and proven strategies for success.`,
-    }),
-    (q) => ({
-      title: `Getting Started with ${tc} — Beginner's Roadmap`,
-      url: `https://learn.example.com/roadmap/${slug}`,
-      snippet: `New to ${q.toLowerCase()}? This roadmap takes you from zero to proficient with curated resources and milestones.`,
-    }),
-    (q) => ({
-      title: `${tc} vs. Alternatives — Comparison`,
-      url: `https://compare.example.com/${slug}`,
-      snippet: `Detailed comparison of ${q.toLowerCase()} against popular alternatives. Performance benchmarks and use-case analysis.`,
-    }),
-  ];
-
-  return SITES.map((site, i) => {
-    const gen = templates[i % templates.length];
-    return gen(query, site);
+/* ── Real Web Search via DuckDuckGo HTML ── */
+async function searchDuckDuckGo(query: string, maxResults = 10): Promise<SearchResult[]> {
+  const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT },
   });
+  
+  if (!response.ok) {
+    throw new Error(`Search failed: ${response.status}`);
+  }
+  
+  const html = await response.text();
+  
+  // Parse results from HTML
+  const results: SearchResult[] = [];
+  const resultRegex = /<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/div>/g;
+  
+  let match;
+  while ((match = resultRegex.exec(html)) !== null && results.length < maxResults) {
+    const href = match[1];
+    // Clean the URL (DuckDuckGo redirects through d.js)
+    const cleanUrl = href.startsWith('http') ? href : decodeURIComponent(href.split('=')[1]?.split('&')[0] || '');
+    if (cleanUrl && cleanUrl.startsWith('http')) {
+      results.push({
+        title: match[2].replace(/<[^>]+>/g, '').trim(),
+        url: cleanUrl,
+        snippet: match[3].replace(/<[^>]+>/g, '').trim(),
+      });
+    }
+  }
+  
+  // Fallback: simpler parsing if regex fails
+  if (results.length === 0) {
+    const linkRegex = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/g;
+    while ((match = linkRegex.exec(html)) !== null && results.length < maxResults) {
+      const url = match[1];
+      const title = match[2].replace(/<[^>]+>/g, '').trim();
+      if (url && title && !url.includes('duckduckgo') && !url.includes('yahoo')) {
+        results.push({ url, title, snippet: `Result from ${new URL(url).hostname}` });
+      }
+    }
+  }
+  
+  return results;
 }
 
-function generateMockContent(result: SearchResult, query: string): string {
-  const paras = [
-    `## Introduction\n\n${result.snippet}`,
-    `The field of ${query.toLowerCase()} has grown rapidly over the past decade. `
-    + `Researchers and practitioners alike have contributed to a rich body of knowledge `
-    + `that spans theory, application, and tooling.`,
-    `## Core Concepts\n\nAt its heart, ${query.toLowerCase()} involves several foundational ideas. `
-    + `First, understanding the basic principles is essential for anyone looking to work in this area. `
-    + `These principles provide a framework for tackling complex problems and building robust solutions.`,
-    `Second, practical experience matters. Hands-on projects, open-source contributions, and real-world `
-    + `case studies help solidify theoretical knowledge and develop intuition for edge cases.`,
-    `## Applications\n\n${titleCase(query)} finds applications in many domains including technology, `
-    + `healthcare, finance, education, and entertainment. Organizations worldwide leverage these `
-    + `techniques to gain competitive advantages and drive innovation.`,
-    `## Challenges & Future Directions\n\nDespite significant progress, several challenges remain. `
-    + `Scalability, interpretability, and ethical considerations are active areas of research. `
-    + `The next decade promises exciting developments as cross-disciplinary collaboration increases.`,
-    `## Conclusion\n\nWhether you're a beginner or an experienced practitioner, staying current `
-    + `with ${query.toLowerCase()} trends is invaluable. Continuous learning and community engagement `
-    + `are key to long-term success in this dynamic field.`,
-  ];
-  return paras.join("\n\n");
+/* ── Real Page Scraping via Jina AI Reader ── */
+async function scrapePageWithJina(url: string, signal?: AbortSignal): Promise<{ title: string; content: string }> {
+  const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
+  const readerUrl = `https://r.jina.ai/read/${encodeURIComponent(cleanUrl)}`;
+  
+  const response = await fetch(readerUrl, { signal });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch: ${response.status}`);
+  }
+  
+  const text = await response.text();
+  
+  // Jina returns markdown with title at the top
+  const lines = text.split('\n');
+  let title = 'Untitled';
+  let content = text;
+  
+  // Extract title from first heading or first line
+  for (const line of lines) {
+    if (line.startsWith('# ')) {
+      title = line.slice(2).trim();
+      break;
+    }
+  }
+  
+  // Clean up the content
+  content = lines
+    .filter(line => line.length > 0)
+    .join('\n')
+    .slice(0, 50000); // Limit content size
+  
+  return { title, content };
 }
 
 /* ── TF-IDF Implementation ── */
@@ -730,6 +721,7 @@ function WebScraper() {
   const [scrapedPages, setScrapedPages] = useState<ScrapedPage[]>([]);
   const [showScript, setShowScript] = useState(false);
   const [scrapeDone, setScrapeDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // Selection state for links to scrape
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
@@ -834,13 +826,24 @@ function WebScraper() {
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
     setIsSearching(true);
+    setError(null);
     setScrapedPages([]);
     setScrapeDone(false);
     setSelectedUrls(new Set());
     setIsSelectionMode(false);
-    await new Promise((r) => setTimeout(r, 1200 + Math.random() * 800));
-    const mock = generateMockResults(query.trim());
-    setResults(mock);
+    try {
+      setError(null);
+      const searchResults = await searchDuckDuckGo(query.trim(), 10);
+      setResults(searchResults);
+      if (searchResults.length === 0) {
+        setError('No results found. Try a different query.');
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+      setError('Search failed. Using sample data instead.');
+      // Fallback to sample data on error
+      setResults(SAMPLE_DOCS.map(p => ({ title: p.title, url: p.url, snippet: p.snippet })));
+    }
     setIsSearching(false);
   }, [query]);
 
@@ -849,16 +852,38 @@ function WebScraper() {
     if (urlsToScrape.size === 0) return;
     setIsScraping(true);
     const pages: ScrapedPage[] = [];
-    for (let i = 0; i < results.length; i++) {
-      if (!urlsToScrape.has(results[i].url)) continue;
-      await new Promise((r) => setTimeout(r, 300 + Math.random() * 400));
-      const r = results[i];
-      pages.push({
-        ...r,
-        content: generateMockContent(r, query),
-        scrapedAt: new Date().toISOString(),
-      });
+    const abortController = new AbortController();
+    
+    try {
+      for (const r of results) {
+        if (!urlsToScrape.has(r.url)) continue;
+        
+        try {
+          const scraped = await scrapePageWithJina(r.url, abortController.signal);
+          pages.push({
+            title: scraped.title || r.title,
+            url: r.url,
+            snippet: r.snippet,
+            content: scraped.content,
+            scrapedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.error(`Failed to scrape ${r.url}:`, err);
+          // Add with original data as fallback
+          pages.push({
+            ...r,
+            content: `Failed to scrape content. URL: ${r.url}`,
+            scrapedAt: new Date().toISOString(),
+          });
+        }
+        
+        // Small delay between requests to be nice to the server
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (err) {
+      console.error('Scraping failed:', err);
     }
+    
     setScrapedPages(pages);
     setIsScraping(false);
     setScrapeDone(true);
@@ -1045,6 +1070,14 @@ function WebScraper() {
                     {isSearching ? "Searching…" : "Search"}
                   </button>
                 </div>
+
+                {/* Error message */}
+                {error && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-950/20 border border-red-700/40 text-red-300 text-sm">
+                    <AlertCircle size={14} />
+                    {error}
+                  </div>
+                )}
 
                 {/* Quick stats */}
                 <div className="flex gap-6 text-sm text-slate-400">

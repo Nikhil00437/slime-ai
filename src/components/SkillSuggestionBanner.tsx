@@ -1,5 +1,5 @@
 /**
- * SkillSuggestionBanner - Shows suggestions when detecting skills
+ * PersonalitySuggestionBanner - Shows suggestions when detecting personalities
  * Phase 1: Smart Auto-Detection
  */
 

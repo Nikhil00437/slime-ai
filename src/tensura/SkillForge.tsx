@@ -434,7 +434,7 @@ export const SkillForge: React.FC = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 18 }}>⚗️</span> Skill Forge
+            <span style={{ fontSize: 18 }}>⚗️</span> Personality Forge
           </h2>
           <div style={{ display: 'flex', gap: 8 }}>
             <label

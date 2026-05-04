@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ModelInfo, DEFAULT_SKILLS, Skill } from '../types';
+﻿import React, { useEffect, useRef, useState } from 'react';
+import { ModelInfo, DEFAULT_SKILLS, Skill, SidebarBlockType, AssistantSidebarContent, CodeBlock } from '../types';
 import { useAppContext } from '../store/AppContext';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AttachmentInput, Attachment, getCapabilityFilters, filterModelsByCapabilities } from './AttachmentInput';
@@ -8,6 +8,8 @@ import { SkillQuickAccessBar, getPinnedSkillIds } from './SkillQuickAccessBar';
 import { SkillSuggestionBanner, getSuggestionReason } from './SkillSuggestionBanner';
 import { PersonalitySelector } from './PersonalitySelector';
 import { detectSkillFromQuery, getAttachmentTypeFromList, CONFIDENCE_THRESHOLD } from '../utils/skillDetection';
+import { AssistantSidebar } from './AssistantSidebar';
+import { SidebarManager } from './SidebarManager';
 import {
   Send,
   Square,
@@ -41,8 +43,160 @@ import {
   Trash2,
   Pencil,
   Terminal,
+  Loader2,
+  Plus,
 } from 'lucide-react';
 import { LoopControlPanel } from './LoopControlPanel';
+
+// Clickable Code Block Trigger - replaces code blocks in chat with a clickable card
+function CodeBlockTrigger({ 
+  blocks, 
+  onClick 
+}: { 
+  blocks: CodeBlock[]; 
+  onClick: () => void;
+}) {
+  const [expandedIndex, setExpandedIndex] = React.useState<number | null>(null);
+
+  const getLanguageColor = (language: string) => {
+    const lang = language.toLowerCase();
+    switch (lang) {
+      case 'javascript':
+      case 'typescript':
+      case 'jsx':
+      case 'tsx':
+        return 'text-yellow-400 border-yellow-400/30 bg-yellow-400/5';
+      case 'python':
+      case 'py':
+        return 'text-blue-400 border-blue-400/30 bg-blue-400/5';
+      case 'html':
+      case 'htm':
+        return 'text-orange-500 border-orange-500/30 bg-orange-500/5';
+      case 'css':
+      case 'scss':
+        return 'text-pink-400 border-pink-400/30 bg-pink-400/5';
+      case 'json':
+        return 'text-green-400 border-green-400/30 bg-green-400/5';
+      case 'bash':
+      case 'sh':
+      case 'shell':
+        return 'text-green-500 border-green-500/30 bg-green-500/5';
+      default:
+        return 'text-purple-400 border-purple-400/30 bg-purple-400/5';
+    }
+  };
+
+  const getLanguageIcon = (language: string) => {
+    const lang = language.toLowerCase();
+    switch (lang) {
+      case 'javascript':
+      case 'typescript':
+      case 'jsx':
+      case 'tsx':
+        return '🟨';
+      case 'python':
+      case 'py':
+        return '🐍';
+      case 'html':
+      case 'htm':
+        return '🌐';
+      case 'css':
+      case 'scss':
+        return '🎨';
+      case 'json':
+        return '📋';
+      case 'markdown':
+      case 'md':
+        return '📝';
+      case 'sql':
+        return '🗄️';
+      case 'bash':
+      case 'sh':
+      case 'shell':
+        return '⚡';
+      default:
+        return '💻';
+    }
+  };
+
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        onClick={onClick}
+        className="w-full p-4 bg-gradient-to-br from-dark-800/80 to-dark-900/80 rounded-xl border border-purple-500/20 hover:border-purple-500/40 hover:shadow-lg hover:shadow-purple-500/10 transition-all text-left group cursor-pointer"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-purple-500/20 border border-purple-500/30">
+              <Terminal size={18} className="text-purple-400" />
+            </div>
+            <div>
+              <span className="text-sm font-bold text-purple-400">
+                {blocks.length} Code Block{blocks.length > 1 ? 's' : ''}
+              </span>
+              <div className="text-xs text-dark-500 mt-0.5">
+                Click to view in sidebar
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-dark-500 group-hover:text-dark-300 transition-colors">
+            <span className="hidden sm:inline">Open</span>
+            <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+        
+        <div className="flex flex-wrap gap-2">
+          {blocks.slice(0, 4).map((block, idx) => (
+            <div 
+              key={block.id || idx}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedIndex(expandedIndex === idx ? null : idx);
+              }}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all hover:scale-[1.02] ${getLanguageColor(block.language)}`}
+            >
+              <span className="text-sm">{getLanguageIcon(block.language)}</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold">
+                  {block.filename || block.language}
+                </span>
+                {block.startLine && (
+                  <span className="text-[10px] opacity-60">L{block.startLine}-{block.endLine}</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {blocks.length > 4 && (
+            <div className="flex items-center px-3 py-2 rounded-lg border border-dark-600 bg-dark-800/50 text-dark-400">
+              <span className="text-xs font-medium">+{blocks.length - 4} more</span>
+            </div>
+          )}
+        </div>
+      </button>
+
+      {/* Expanded code preview on click */}
+      {expandedIndex !== null && blocks[expandedIndex] && (
+        <div className="p-3 bg-dark-900/80 rounded-lg border border-purple-500/20 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-purple-400">
+              {blocks[expandedIndex].filename || blocks[expandedIndex].language}
+            </span>
+            <button
+              onClick={() => setExpandedIndex(null)}
+              className="text-dark-500 hover:text-dark-300"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <pre className="text-xs text-dark-300 font-mono overflow-x-auto max-h-32 p-2 bg-dark-950/50 rounded">
+            {blocks[expandedIndex].code.slice(0, 500)}
+            {blocks[expandedIndex].code.length > 500 && '...'}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function fileToBase64(file: File, readerRef?: React.MutableRefObject<FileReader | null>): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -75,9 +229,19 @@ function fileToBase64(file: File, readerRef?: React.MutableRefObject<FileReader 
 
 interface ChatPanelProps {
   onOpenScraper?: () => void;
+  rightSidebarOpen?: boolean;
+  onRightSidebarOpen?: (open: boolean) => void;
+  onRightSidebarContentChange?: (content: AssistantSidebarContent | undefined) => void;
+  onRightSidebarStreamingChange?: (streaming: boolean) => void;
 }
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
+export const ChatPanel: React.FC<ChatPanelProps> = ({
+  onOpenScraper,
+  rightSidebarOpen: externalRightSidebarOpen,
+  onRightSidebarOpen: setExternalRightSidebarOpen,
+  onRightSidebarContentChange: setExternalRightSidebarContent,
+  onRightSidebarStreamingChange: setExternalRightSidebarStreaming,
+}) => {
   const {
     activeConversation,
     activeModel,
@@ -115,6 +279,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
     cancelLoop,
     pendingWebSearch,
     setPendingWebSearch,
+    setMessageSidebarActiveBlock,
   } = useAppContext();
 
   const [input, setInput] = useState('');
@@ -140,6 +305,102 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
     return stored ? JSON.parse(stored) : true;
   });
   const [showLoopPanel, setShowLoopPanel] = useState(false);
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+
+  // Assistant sidebar state - track which messages have open sidebars
+  const [openSidebarMessageId, setOpenSidebarMessageId] = useState<string | null>(null);
+
+  // Helper to extract code blocks from message content
+  const extractCodeBlocksFromContent = (content: string): CodeBlock[] => {
+    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+    const blocks: CodeBlock[] = [];
+    let match;
+    let index = 0;
+
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+      const language = match[1] || 'text';
+      const code = match[2];
+
+      // Skip mermaid blocks - they go to sidebar differently
+      if (language.toLowerCase() === 'mermaid') {
+        continue;
+      }
+
+      blocks.push({
+        id: `code-${index}`,
+        language,
+        code,
+      });
+      index++;
+    }
+
+    return blocks;
+  };
+
+  // Helper to open right sidebar with content
+  const openRightSidebar = (messageId: string, content: AssistantSidebarContent, blockType?: SidebarBlockType, messageContent?: string) => {
+    // If no coding blocks but we have message content, extract them
+    let finalContent = content;
+    if ((!content.coding?.blocks?.length) && messageContent) {
+      const extractedBlocks = extractCodeBlocksFromContent(messageContent);
+      if (extractedBlocks.length > 0) {
+        finalContent = {
+          ...content,
+          activeBlock: 'coding',
+          coding: {
+            blocks: extractedBlocks,
+            isStreaming: false,
+            currentBlockId: '',
+            timestamp: Date.now(),
+          },
+        };
+      }
+    }
+
+    // Set active block to the specified type, or default to coding > processing > thinking
+    const activeBlock = blockType || finalContent.coding ? 'coding' : finalContent.processing ? 'processing' : finalContent.thinking ? 'thinking' : undefined;
+
+    const contentWithActiveBlock = {
+      ...finalContent,
+      activeBlock,
+    };
+
+    if (setExternalRightSidebarOpen && setExternalRightSidebarContent) {
+      setExternalRightSidebarOpen(true);
+      setExternalRightSidebarContent(contentWithActiveBlock);
+      setExternalRightSidebarStreaming?.(finalContent.thinking?.isStreaming || finalContent.processing?.isStreaming || finalContent.coding?.isStreaming || false);
+    }
+    setOpenSidebarMessageId(messageId);
+  };
+
+  // Helper to close right sidebar
+  const closeRightSidebar = () => {
+    if (setExternalRightSidebarOpen) {
+      setExternalRightSidebarOpen(false);
+      setExternalRightSidebarContent?.(undefined);
+    }
+    setOpenSidebarMessageId(null);
+  };
+
+  // Filter out code blocks from message content when they exist in sidebar
+  const getFilteredContent = (content: string, assistantSidebar?: AssistantSidebarContent): string => {
+    let filtered = content;
+
+    // Check for mermaid blocks in content and remove them (replace with a notice)
+    const mermaidBlockRegex = /```mermaid\n[\s\S]*?```/gi;
+    const hasMermaid = mermaidBlockRegex.test(filtered);
+    if (hasMermaid) {
+      filtered = filtered.replace(mermaidBlockRegex, '\n\n📊 Mermaid diagram available in sidebar\n');
+    }
+
+    // Code blocks are now shown as clickable blocks in the chat, so we don't need to add a notice here
+    // The CodeBlockTrigger component handles displaying code blocks as clickable cards
+
+    return filtered;
+  };
+
+  // Check if using external sidebar
+  const isUsingExternalSidebar = !!setExternalRightSidebarOpen;
 
   // Skill Quick Access state
   const [pinnedSkillIds] = useState<string[]>(() => getPinnedSkillIds());
@@ -150,6 +411,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
 
   // Personality state
   const [activePersonalityId, setActivePersonalityId] = useState<string | null>(null);
+
+  // Input history navigation state within component (synced with context)
+  const [inputHistoryLocalIndex, setInputHistoryLocalIndex] = useState<number>(-1);
 
   // Persist agent steps collapse state
   useEffect(() => {
@@ -203,6 +467,34 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
     };
   }, [input, activeConversationId]);
 
+  // Auto-scroll detection - track if user is at bottom
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    const handleScroll = () => {
+      const threshold = 100;
+      const atBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + threshold;
+      _setIsAtBottom(atBottom);
+      // Only show new messages button if not at bottom and there are new messages
+      if (!atBottom && !isLoading) {
+        setShowNewMessages(true);
+      }
+    };
+    
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [isLoading]);
+
+  // Auto-scroll to bottom on new messages when already at bottom
+  useEffect(() => {
+    if (_isAtBottom && activeConversation?.messages.length) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    }
+  }, [activeConversation?.messages.length, _isAtBottom]);
+
+  // Reset history navigation on new message send
+
   // Skill auto-detection and suggestion when input changes
   useEffect(() => {
     if (!input.trim() || input.length < 3) {
@@ -247,9 +539,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
 
     // Add to input history
     addToInputHistory(trimmed);
-
+    
+    // Reset input field and history navigation
     setInput('');
-    // Reset history navigation on new message
+    setInputHistoryLocalIndex(-1);
+    setShowAttachmentMenu(false);
     const currentAttachments = [...attachments];
     setAttachments([]);
     await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined, convId);
@@ -259,17 +553,31 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
     // Arrow up - cycle through input history
     if (e.key === 'ArrowUp' && inputHistory.length > 0 && !showModelDropdown) {
       e.preventDefault();
-      const newIndex = inputHistoryIndex < inputHistory.length - 1 ? inputHistoryIndex + 1 : inputHistoryIndex;
+      const newIndex = inputHistoryLocalIndex < inputHistory.length - 1 ? inputHistoryLocalIndex + 1 : inputHistoryLocalIndex;
+      setInputHistoryLocalIndex(newIndex);
       setInput(inputHistory[newIndex] || '');
       return;
     }
     
-    // Arrow down - cycle through input history
-    if (e.key === 'ArrowDown' && inputHistoryIndex > 0) {
+    // Arrow down - cycle through input history (or clear if at start of history)
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      const newIndex = inputHistoryIndex - 1;
-      setInput(inputHistory[newIndex] || '');
+      if (inputHistoryLocalIndex > 0) {
+        // Go back one in history
+        const newIndex = inputHistoryLocalIndex - 1;
+        setInputHistoryLocalIndex(newIndex);
+        setInput(inputHistory[newIndex] || '');
+      } else if (inputHistoryLocalIndex === 0) {
+        // At start of history - clear input
+        setInputHistoryLocalIndex(-1);
+        setInput('');
+      }
       return;
+    }
+    
+    // Reset history index when user starts typing (not arrow keys)
+    if (inputHistoryLocalIndex !== -1) {
+      setInputHistoryLocalIndex(-1);
     }
     
     // Ctrl+Enter - send (multiline)
@@ -279,13 +587,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onOpenScraper }) => {
       return;
     }
     
-    // Escape - close dropdowns
+    // Escape - close dropdowns and reset history navigation
     if (e.key === 'Escape') {
       setShowModelDropdown(false);
       setShowSearch(false);
       setShowQuickPrompts(false);
+      setShowAttachmentMenu(false);
       setEditingMessageId(null);
       _setShowMessageMenu(null);
+      setInputHistoryLocalIndex(-1);
       return;
     }
     
@@ -1007,6 +1317,79 @@ return (
                               typing...
                             </span>
                           )}
+                          {/* Thinking indicator - shown when assistant has thinking content */}
+                          {message.assistantSidebar?.thinking && !message.isStreaming && (
+                            <button
+                              onClick={() => {
+                                if (openSidebarMessageId !== message.id) {
+                                  openRightSidebar(message.id, message.assistantSidebar!, 'thinking');
+                                }
+                              }}
+                              className={`flex items-center gap-1 text-xs transition-colors ${
+                                openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'thinking'
+                                  ? 'text-green-400'
+                                  : 'text-green-500 hover:text-green-400'
+                              }`}
+                            >
+                              <Brain size={12} />
+                              <span>Thinking</span>
+                              {message.assistantSidebar.thinking.isStreaming && (
+                                <Loader2 size={10} className="animate-spin" />
+                              )}
+                            </button>
+                          )}
+                          {/* Processing indicator - shown when assistant is running tools */}
+                          {message.assistantSidebar?.processing && (
+                            <button
+                              onClick={() => {
+                                if (openSidebarMessageId !== message.id) {
+                                  openRightSidebar(message.id, message.assistantSidebar!, 'processing');
+                                }
+                              }}
+                              className={`flex items-center gap-1 text-xs transition-colors ${
+                                openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'processing'
+                                  ? 'text-cyan-400'
+                                  : 'text-cyan-500 hover:text-cyan-400'
+                              }`}
+                            >
+                              <Cpu size={12} />
+                              <span>Processing</span>
+                              {message.assistantSidebar.processing.isStreaming && (
+                                <Loader2 size={10} className="animate-spin" />
+                              )}
+                            </button>
+                          )}
+                          {/* Coding indicator - shown when assistant has code blocks */}
+                          {(message.assistantSidebar?.coding || message.content.includes('```')) && (
+                            <button
+                              onClick={() => {
+                                if (openSidebarMessageId !== message.id) {
+                                  // Create sidebar content if it doesn't exist
+                                  const sidebarContent = message.assistantSidebar || {
+                                    activeBlock: 'coding' as SidebarBlockType,
+                                    coding: {
+                                      blocks: [],
+                                      isStreaming: false,
+                                      currentBlockId: '',
+                                      timestamp: Date.now(),
+                                    },
+                                  };
+                                  openRightSidebar(message.id, sidebarContent, 'coding', message.content);
+                                }
+                              }}
+                              className={`flex items-center gap-1 text-xs transition-colors ${
+                                openSidebarMessageId === message.id && message.assistantSidebar?.activeBlock === 'coding'
+                                  ? 'text-purple-400'
+                                  : 'text-purple-500 hover:text-purple-400'
+                              }`}
+                            >
+                              <Terminal size={12} />
+                              <span>Code</span>
+                              {message.assistantSidebar?.coding?.isStreaming && (
+                                <Loader2 size={10} className="animate-spin" />
+                              )}
+                            </button>
+                          )}
                           {message.error && (
                             <span className="flex items-center gap-1 text-xs text-red-400">
                               <AlertTriangle size={12} />
@@ -1022,6 +1405,20 @@ return (
                           )}
  
                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                            {/* Assistant Sidebar Toggle */}
+                            {message.role === 'assistant' && message.assistantSidebar && message.assistantSidebar.activeBlock && (
+                              <button
+                                onClick={() => openSidebarMessageId === message.id ? closeRightSidebar() : openRightSidebar(message.id, message.assistantSidebar!, message.assistantSidebar.activeBlock)}
+                                className={`p-1 transition-colors focus-ring-a11y ${
+                                  openSidebarMessageId === message.id
+                                    ? 'text-slime-400'
+                                    : 'text-dark-500 hover:text-dark-100'
+                                }`}
+                                title="Toggle assistant details"
+                              >
+                                <Sparkles size={12} />
+                              </button>
+                            )}
                             {message.role === 'assistant' && (
                               <button
                                 onClick={() => copyMessageToClipboard(message.content)}
@@ -1110,17 +1507,49 @@ return (
                                   </div>
                                 )}
                                 <div className="whitespace-pre-wrap text-dark-100">
-                                  {message.content}
+                                  {message.role === 'assistant' && message.assistantSidebar
+                                    ? getFilteredContent(message.content, message.assistantSidebar)
+                                    : message.content}
                                 </div>
                               </div>
                             ) : (
-                              <MarkdownRenderer content={message.content} />
+                              <MarkdownRenderer content={
+                                message.role === 'assistant' && message.assistantSidebar
+                                  ? getFilteredContent(message.content, message.assistantSidebar)
+                                  : message.content
+                              } />
+                            )}
+                            
+                            {/* Clickable Code Block Trigger - replaces code blocks in chat */}
+                            {message.role === 'assistant' && message.assistantSidebar?.coding?.blocks && message.assistantSidebar.coding.blocks.length > 0 && (
+                              <CodeBlockTrigger
+                                blocks={message.assistantSidebar.coding.blocks}
+                                onClick={() => {
+                                  if (openSidebarMessageId !== message.id) {
+                                    openRightSidebar(message.id, message.assistantSidebar!, 'coding', message.content);
+                                  }
+                                }}
+                              />
                             )}
                           </div>
                         )}
                       </>
                     )}
                   </div>
+
+                  {/* Enhanced Sidebar - shown for assistant messages with sidebar content (only when not using external sidebar) */}
+                  {!isUsingExternalSidebar && message.role === 'assistant' && message.assistantSidebar && openSidebarMessageId === message.id && (
+                    <SidebarManager
+                      content={message.assistantSidebar}
+                      onClose={() => closeRightSidebar()}
+                      isStreaming={message.isStreaming}
+                      compact={false}
+                      onBlockChange={(block) => {
+                        // Use context method to update active block
+                        setMessageSidebarActiveBlock?.(message.id, block);
+                      }}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -1173,28 +1602,11 @@ return (
       {/* Input Area - Fixed at bottom */}
       <div className="sticky bottom-0 z-10 border-t border-dark-700/30 p-4 bg-dark-900/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto">
-          {/* Skill Suggestion Banner - shown when skill detected but below auto-threshold */}
-          {suggestedSkill && (
-            <SkillSuggestionBanner
-              skill={suggestedSkill}
-              confidence={suggestionConfidence}
-              reason={suggestionReason}
-              onAccept={() => {
-                setActiveSkillForBar(suggestedSkill.id);
-                setSuggestedSkill(null);
-              }}
-              onDismiss={() => {
-                setSuggestedSkill(null);
-              }}
-            />
-          )}
-
           {/* Personality Selector - Rotating lineup */}
           <PersonalitySelector
             activePersonalityId={activePersonalityId}
             onPersonalitySelect={(id) => {
               setActivePersonalityId(id);
-              setSuggestedSkill(null);
             }}
           />
 
@@ -1278,20 +1690,48 @@ return (
             }}
           >
             <div className="flex items-center gap-1 pb-1">
-              <button
-                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors btn-press"
-                title="Add image"
-                onClick={() => document.getElementById('image-input')?.click()}
-              >
-                <Image size={16} />
-              </button>
-              <button
-                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors btn-press"
-                title="Add file"
-                onClick={() => document.getElementById('file-input')?.click()}
-              >
-                <FileText size={16} />
-              </button>
+              {/* Add Attachment Button with Dropdown */}
+              <div className="relative">
+                <button
+                  className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors btn-press"
+                  title="Add attachment"
+                  aria-label="Add attachment"
+                  aria-expanded={showAttachmentMenu}
+                  onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
+                >
+                  <Plus size={16} />
+                </button>
+                {showAttachmentMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowAttachmentMenu(false)}
+                    />
+                    <div className="absolute bottom-full left-0 mb-1 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl py-1 z-50 min-w-32">
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40 transition-colors"
+                        onClick={() => {
+                          document.getElementById('image-input')?.click();
+                          setShowAttachmentMenu(false);
+                        }}
+                      >
+                        <Image size={14} />
+                        Add image
+                      </button>
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40 transition-colors"
+                        onClick={() => {
+                          document.getElementById('file-input')?.click();
+                          setShowAttachmentMenu(false);
+                        }}
+                      >
+                        <FileText size={14} />
+                        Add file
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
               <input
                 id="image-input"
                 type="file"
@@ -1422,6 +1862,7 @@ return (
                 disabled={!activeModel || (!input.trim() && attachments.length === 0)}
                 className="p-2 btn-send disabled:bg-dark-700 disabled:text-dark-500 text-dark-900 rounded-lg transition-colors shrink-0 btn-press disabled:btn-press:scale-100 focus-ring-a11y"
                 title="Send message (Ctrl+Enter)"
+                aria-label="Send message"
               >
                 <Send size={16} />
               </button>

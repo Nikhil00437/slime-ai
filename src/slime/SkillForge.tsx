@@ -470,12 +470,12 @@ export const SkillForge: React.FC = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 18 }}>⚗️</span> Skill Forge
+            <span style={{ fontSize: 18 }}>⚗️</span> Personality Forge
           </h2>
           <div style={{ display: 'flex', gap: 8 }}>
             <label
               htmlFor="skill-import"
-              title="Import .skill (Claude Desktop or Forge) or .md file"
+              title="Import .personality or .md file"
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '6px 10px', borderRadius: 8, cursor: 'pointer',
@@ -511,7 +511,7 @@ export const SkillForge: React.FC = () => {
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            placeholder="Describe a skill… (e.g. 'analyze code for performance bottlenecks')"
+            placeholder="Describe a personality… (e.g. 'a skeptical analyst who questions everything')"
             disabled={generating}
             rows={2}
             style={{

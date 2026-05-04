@@ -72,16 +72,23 @@ import {
   loadModelMemories,
   saveEnvToVault,
   loadEnvFromVault,
+  saveToolLevelsToVault,
+  loadToolLevelsFromVault,
   VaultEnv,
   ModelMemory,
   UserMemory,
-  saveSkillsToVault,
-  loadSkillsFromVault,
 } from '../api/vault';
-import { loadSkills } from '../api/skillStorage';
+import {
+  ProcessingStep,
+  CodeBlock,
+  SidebarBlockType,
+  ThinkingBlock,
+  ProcessingBlock,
+  CodingBlock,
+  AssistantSidebarContent,
+} from '../types';
 import { Attachment } from '../components/AttachmentInput';
-import { SlimeSkill } from '../slime/types';
-import { TOOL_SETTINGS, Skill, PERSONALITY_PRESETS } from '../types';
+import { TOOL_SETTINGS, Skill, PERSONALITY_PRESETS, ToolLevel, getToolRankFromLevel } from '../types';
 import {
   detectSkillFromQuery,
   getAttachmentTypeFromList,
@@ -99,6 +106,10 @@ interface ToolSettingsState {
   enabledTools: Record<string, boolean>;
 }
 
+interface ToolLevelsState {
+  levels: Record<string, ToolLevel>;
+}
+
 interface AppState {
   providers: Provider[];
   conversations: Conversation[];
@@ -112,7 +123,6 @@ interface AppState {
   vault: VaultState;
   modelMemories: ModelMemory[];
   userMemory: UserMemory | null;
-  skills: SlimeSkill[];
   isExecutingTool: boolean;
   activeTools: string[];
   inputHistory: string[];
@@ -120,6 +130,7 @@ interface AppState {
   searchQuery: string;
   searchResults: string[];
   toolSettings: ToolSettingsState;
+  toolLevels: ToolLevelsState;
   // Loop execution state
   loopState: LoopState | null;
   loopPaused: boolean;
@@ -149,7 +160,6 @@ interface AppContextType extends AppState {
   refreshVaultState: () => void;
   hasFileSystemAccess: () => boolean;
   saveApiKeyToVault: (providerId: string, apiKey: string) => Promise<void>;
-  setSkills: React.Dispatch<React.SetStateAction<SlimeSkill[]>>;
   clearConversationMessages: (id: string) => void;
   // New feature methods
   regenerateLastResponse: () => Promise<void>;
@@ -190,6 +200,16 @@ interface AppContextType extends AppState {
   // WebScraper routing
   pendingWebSearch: string | null;
   setPendingWebSearch: (query: string | null) => void;
+  // Assistant sidebar helpers
+  updateMessageThinking: (messageId: string, content: string, isStreaming?: boolean) => void;
+  updateMessageProcessing: (messageId: string, steps: ProcessingStep[]) => void;
+  updateMessageCoding: (messageId: string, blocks: CodeBlock[]) => void;
+  setMessageSidebarActiveBlock: (messageId: string, block: SidebarBlockType) => void;
+  // Tool leveling
+  getToolLevel: (toolId: string) => ToolLevel;
+  recordToolCall: (toolId: string, success: boolean, durationMs: number) => void;
+  thumbsUpTool: (toolId: string) => void;
+  thumbsDownTool: (toolId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -661,7 +681,7 @@ async function codeSearchExa(query: string, tokens = 5000): Promise<any> {
     return { 
       results: data.results || [], 
       count: data.results?.length || 0,
-      provider: 'exa',
+      provider: 'exa'
     };
   } catch (e: any) {
     if (e.name === 'AbortError' || e.message?.includes('aborted')) {
@@ -689,8 +709,10 @@ export async function executeToolWithSettings(
   name: string, 
   args: Record<string, any>,
   settings: { timeout: number; maxRetries: number; retryBackoff: number; streamResults: boolean },
-  onStream?: (chunk: string) => void
+  onStream?: (chunk: string) => void,
+  onComplete?: (success: boolean, durationMs: number) => void
 ): Promise<any> {
+  const startTime = Date.now();
   let lastError: any = null;
   
   for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {
@@ -710,12 +732,20 @@ export async function executeToolWithSettings(
         onStream(JSON.stringify(result));
       }
       
+      // Record successful call
+      if (onComplete) {
+        onComplete(true, Date.now() - startTime);
+      }
+      
       return result;
     } catch (e: any) {
       lastError = e;
       
       // Check if cancelled
       if (e.name === 'AbortError') {
+        if (onComplete) {
+          onComplete(false, Date.now() - startTime);
+        }
         return { error: 'Tool execution cancelled' };
       }
       
@@ -726,6 +756,11 @@ export async function executeToolWithSettings(
         );
       }
     }
+  }
+  
+  // Record failed call
+  if (onComplete) {
+    onComplete(false, Date.now() - startTime);
   }
   
   return { error: lastError?.message || 'Tool execution failed after retries' };
@@ -1095,9 +1130,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [showSettings, setShowSettings] = useState(false);
   const [modelMemories, setModelMemories] = useState<ModelMemory[]>([]);
   const [userMemory, setUserMemory] = useState<UserMemory | null>(null);
-  const [skills, setSkills] = useState<SlimeSkill[]>(
-    loadFromStorage<Skill[]>('mm_skills', DEFAULT_SKILLS) as unknown as SlimeSkill[]
-  );
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [activeTools, setActiveTools] = useState<string[]>([]);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
@@ -1122,6 +1154,109 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { enabledTools: initial };
   });
 
+  // Tool leveling state
+  const [toolLevels, setToolLevels] = useState<ToolLevelsState>(() => {
+    const saved = localStorage.getItem('mm_tool_levels');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {}
+    }
+    return { levels: {} };
+  });
+
+  // Get tool level for a specific tool
+  const getToolLevel = useCallback((toolId: string): ToolLevel => {
+    const level = toolLevels.levels[toolId];
+    if (level) return level;
+    // Return default level for new tools
+    return {
+      toolId,
+      rank: 'basic',
+      level: 1,
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      thumbsUp: 0,
+      thumbsDown: 0,
+      masteryPoints: 0,
+    };
+  }, [toolLevels]);
+
+  // Record a tool call (success or failure)
+  const recordToolCall = useCallback((toolId: string, success: boolean, durationMs: number) => {
+    setToolLevels(prev => {
+      const current = prev.levels[toolId] || {
+        toolId,
+        rank: 'basic' as const,
+        level: 1,
+        totalCalls: 0,
+        successfulCalls: 0,
+        failedCalls: 0,
+        thumbsUp: 0,
+        thumbsDown: 0,
+        masteryPoints: 0,
+      };
+      const newTotalCalls = current.totalCalls + 1;
+      const newLevel = Math.floor(Math.log10(newTotalCalls + 1) * 3) + 1;
+      const newRank = getToolRankFromLevel(newLevel);
+      return {
+        ...prev,
+        levels: {
+          ...prev.levels,
+          [toolId]: {
+            ...current,
+            totalCalls: newTotalCalls,
+            successfulCalls: current.successfulCalls + (success ? 1 : 0),
+            failedCalls: current.failedCalls + (success ? 0 : 1),
+            lastUsed: Date.now(),
+            level: newLevel,
+            rank: newRank,
+            masteryPoints: current.masteryPoints + (success ? 10 : 1),
+          },
+        },
+      };
+    });
+  }, []);
+
+  // Thumbs up a tool
+  const thumbsUpTool = useCallback((toolId: string) => {
+    setToolLevels(prev => {
+      const current = prev.levels[toolId];
+      if (!current) return prev;
+      return {
+        ...prev,
+        levels: {
+          ...prev.levels,
+          [toolId]: {
+            ...current,
+            thumbsUp: current.thumbsUp + 1,
+            masteryPoints: current.masteryPoints + 5,
+          },
+        },
+      };
+    });
+  }, []);
+
+  // Thumbs down a tool
+  const thumbsDownTool = useCallback((toolId: string) => {
+    setToolLevels(prev => {
+      const current = prev.levels[toolId];
+      if (!current) return prev;
+      return {
+        ...prev,
+        levels: {
+          ...prev.levels,
+          [toolId]: {
+            ...current,
+            thumbsDown: current.thumbsDown + 1,
+            masteryPoints: Math.max(0, current.masteryPoints - 2),
+          },
+        },
+      };
+    });
+  }, []);
+
   // WebScraper routing state
   const [pendingWebSearch, setPendingWebSearch] = useState<string | null>(null);
 
@@ -1131,6 +1266,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     lastSyncTime: null,
     isSyncing: false,
   });
+
+  // Persist tool levels to localStorage and vault
+  useEffect(() => {
+    localStorage.setItem('mm_tool_levels', JSON.stringify(toolLevels));
+    if (vault.vaultConnected) {
+      saveToolLevelsToVault(toolLevels.levels).catch(console.error);
+    }
+  }, [toolLevels, vault.vaultConnected]);
 
   const abortRef = useRef(false);
 
@@ -1181,22 +1324,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const userMem = await loadUserMemory();
     setUserMemory(userMem);
-
-    const vaultSkills = await loadSkillsFromVault();
-    if (vaultSkills.length > 0) {
-      setSkills(prev => {
-        const merged = [...prev];
-        for (const vaultSkill of vaultSkills) {
-          const existingIdx = merged.findIndex(s => s.id === vaultSkill.id);
-          if (existingIdx >= 0) {
-            merged[existingIdx] = { ...merged[existingIdx], ...vaultSkill };
-          } else {
-            merged.push(vaultSkill);
-          }
-        }
-        return merged;
-      });
-    }
 
     const vaultEnv = await loadEnvFromVault();
     const providerKeys: Record<string, string> = {
@@ -1317,20 +1444,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
         loadModelMemories().then(setModelMemories);
         loadUserMemory().then(setUserMemory);
-        loadSkillsFromVault().then((vaultSkills) => {
-          if (vaultSkills.length > 0) {
-            setSkills(prev => {
-              const merged = [...prev];
-              for (const vaultSkill of vaultSkills) {
-                const existingIdx = merged.findIndex(s => s.id === vaultSkill.id);
-                if (existingIdx >= 0) {
-                  merged[existingIdx] = { ...merged[existingIdx], ...vaultSkill };
-                } else {
-                  merged.push(vaultSkill);
-                }
-              }
-              return merged;
-            });
+        loadToolLevelsFromVault().then(vaultLevels => {
+          if (vaultLevels && Object.keys(vaultLevels).length > 0) {
+            setToolLevels({ levels: vaultLevels });
           }
         });
       }
@@ -1367,10 +1483,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [settings]);
 
   useEffect(() => {
-    saveToStorage('mm_skills', skills);
-  }, [skills]);
-
-  useEffect(() => {
     saveToStorage('mm_providers', providers);
   }, [providers]);
 
@@ -1381,15 +1493,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     saveToStorage('mm_tool_settings', toolSettings);
   }, [toolSettings]);
-
-  useEffect(() => {
-    if (vault.vaultConnected && skills.length > 0) {
-      const timeout = setTimeout(() => {
-        saveSkillsToVault(skills).catch(console.error);
-      }, 2000);
-      return () => clearTimeout(timeout);
-    }
-  }, [skills, vault.vaultConnected]);
 
   useEffect(() => {
     const init = async () => {
@@ -1731,9 +1834,9 @@ const sendMessage = useCallback(
       // Check if query contains memory trigger phrases
       const shouldExtractMemory = (query: string): boolean => {
         const lowerQuery = query.toLowerCase();
-        for (const skill of skills) {
-          if (!skill.enabled) continue;
-          const triggers = (skill as any).memoryTriggers || [];
+        for (const personality of PERSONALITY_PRESETS) {
+          if (!personality.enabled) continue;
+          const triggers = personality.memoryTriggers || [];
           if (triggers.some((t: string) => lowerQuery.includes(t.toLowerCase()))) {
             return true;
           }
@@ -1946,6 +2049,9 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
           provider: activeModel.provider,
           timestamp: Date.now(),
           isStreaming: true,
+          assistantSidebar: {
+            activeBlock: null,
+          },
         };
 
         setConversations((prev) =>
@@ -1960,6 +2066,9 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
         // Accumulate native tool call deltas during streaming
         const accumulatedToolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+
+        // Track code blocks for sidebar
+        let detectedCodeBlocks: { id: string; language: string; code: string }[] = [];
 
         // ✅ Day 3: Retry with exponential backoff
           const retryConfig = getRetryConfig(activeModel.provider);
@@ -1980,18 +2089,91 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
               onChunk: (text: string) => {
                 if (abortRef.current) return;
                 assistantResponseContent += text;
-                setConversations((prev) =>
-                  prev.map((c) =>
-                    c.id === targetConvId
-                      ? {
-                          ...c,
-                          messages: c.messages.map((m) =>
-                            m.id === loopAssistantMessageId ? { ...m, content: m.content + text } : m
-                          ),
-                        }
-                      : c
-                  )
-                );
+
+                // Detect thinking tags (some models use <thinking>...</thinking>)
+                const thinkingMatch = text.match(/<thinking>([\s\S]*?)<\/thinking>/);
+                if (thinkingMatch) {
+                  // Update thinking in sidebar (accumulate content)
+                  setConversations((prev) =>
+                    prev.map((c) =>
+                      c.id === targetConvId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === loopAssistantMessageId
+                                ? {
+                                    ...m,
+                                    assistantSidebar: {
+                                      activeBlock: 'thinking',
+                                      thinking: {
+                                        content: (m.assistantSidebar?.thinking?.content || '') + thinkingMatch[1],
+                                        isStreaming: true,
+                                        timestamp: Date.now(),
+                                      },
+                                    },
+                                  }
+                                : m
+                            ),
+                          }
+                        : c
+                    )
+                  );
+                  // Remove thinking tags from displayed content
+                  text = text.replace(thinkingMatch[0], '');
+                }
+
+                // Detect code blocks for sidebar
+                const codeBlockMatch = text.match(/```(\w+)?\n([\s\S]*?)```/);
+                if (codeBlockMatch) {
+                  const language = codeBlockMatch[1] || 'text';
+                  const code = codeBlockMatch[2];
+                  detectedCodeBlocks.push({
+                    id: `code-${detectedCodeBlocks.length + 1}`,
+                    language,
+                    code,
+                  });
+
+                  // Update assistantSidebar with coding blocks
+                  setConversations((prev) =>
+                    prev.map((c) =>
+                      c.id === targetConvId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === loopAssistantMessageId
+                                ? {
+                                    ...m,
+                                    content: m.content + text,
+                                    assistantSidebar: {
+                                      activeBlock: 'coding',
+                                      coding: {
+                                        blocks: [...detectedCodeBlocks],
+                                        isStreaming: true,
+                                        currentBlockId: `code-${detectedCodeBlocks.length}`,
+                                        timestamp: Date.now(),
+                                      },
+                                    },
+                                  }
+                                : m
+                            ),
+                          }
+                        : c
+                    )
+                  );
+                } else {
+                  setConversations((prev) =>
+                    prev.map((c) =>
+                      c.id === targetConvId
+                        ? {
+                            ...c,
+                            messages: c.messages.map((m) =>
+                              m.id === loopAssistantMessageId ? { ...m, content: m.content + text } : m
+                            ),
+                          }
+                        : c
+                    )
+                  );
+                }
               },
               onToolCalls: (toolCallDeltas: ToolCallDelta[]) => {
                 for (const delta of toolCallDeltas) {
@@ -2004,6 +2186,45 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                       name: delta.function?.name || '',
                       arguments: delta.function?.arguments || '',
                     });
+
+                    // Update assistantSidebar with processing step
+                    const steps = Array.from(accumulatedToolCalls.values()).map((tc, i) => ({
+                      id: tc.id || `step-${i}`,
+                      name: tc.name,
+                      status: 'running' as const,
+                      input: tc.arguments,
+                    }));
+
+                    setConversations((prev) =>
+                      prev.map((c) =>
+                        c.id === targetConvId
+                          ? {
+                              ...c,
+                              messages: c.messages.map((m) =>
+                                m.id === loopAssistantMessageId
+                                  ? {
+                                      ...m,
+                                      toolCalls: Array.from(accumulatedToolCalls.values()).map(tc => ({
+                                        id: tc.id || generateId(),
+                                        type: 'function' as const,
+                                        function: { name: tc.name, arguments: tc.arguments },
+                                      })),
+                                      assistantSidebar: {
+                                        activeBlock: 'processing',
+                                        processing: {
+                                          steps,
+                                          isStreaming: true,
+                                          currentStepId: steps[steps.length - 1]?.id,
+                                          timestamp: Date.now(),
+                                        },
+                                      },
+                                    }
+                                  : m
+                              ),
+                            }
+                          : c
+                      )
+                    );
                   } else if (existing) {
                     // Accumulate delta
                     if (delta.function?.name) existing.name += delta.function.name;
@@ -2014,13 +2235,45 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
               },
               onComplete: async (usage?: { inputTokens: number; outputTokens: number; totalTokens: number }) => {
                 const responseTime = Date.now() - requestStartTime;
+                
+                // Finalize sidebar based on what was detected
+                const finalSidebar: import('../types').AssistantSidebarContent = {
+                  activeBlock: accumulatedToolCalls.size > 0 ? 'processing' : (detectedCodeBlocks.length > 0 ? 'coding' : null),
+                  ...(accumulatedToolCalls.size > 0 && {
+                    processing: {
+                      steps: Array.from(accumulatedToolCalls.values()).map((tc, i) => ({
+                        id: tc.id || `step-${i}`,
+                        name: tc.name,
+                        status: 'completed' as const,
+                        input: tc.arguments,
+                      })),
+                      isStreaming: false,
+                      timestamp: Date.now(),
+                    },
+                  }),
+                  ...(detectedCodeBlocks.length > 0 && {
+                    coding: {
+                      blocks: detectedCodeBlocks.map(b => ({
+                        id: b.id,
+                        language: b.language,
+                        code: b.code,
+                      })),
+                      isStreaming: false,
+                      currentBlockId: detectedCodeBlocks[detectedCodeBlocks.length - 1]?.id,
+                      timestamp: Date.now(),
+                    },
+                  }),
+                };
+
                 setConversations((prev) =>
                   prev.map((c) =>
                     c.id === targetConvId
                       ? {
                           ...c,
                           messages: c.messages.map((m) =>
-                            m.id === loopAssistantMessageId ? { ...m, isStreaming: false, responseTime, usage } : m
+                            m.id === loopAssistantMessageId 
+                              ? { ...m, isStreaming: false, responseTime, usage, assistantSidebar: finalSidebar } 
+                              : m
                           ),
                         }
                       : c
@@ -2103,6 +2356,31 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
                     )
                   } : c));
 
+                  // Update assistantSidebar with tool results
+                  const updatedSteps = parsedToolCalls.map((tc, i) => ({
+                    id: tc.id || `step-${i}`,
+                    name: tc.function.name,
+                    status: 'completed' as const,
+                    input: tc.function.arguments,
+                    output: results[i]?.content || '',
+                    endTime: Date.now(),
+                  }));
+
+                  setConversations(prev => prev.map(c => c.id === targetConvId ? {
+                    ...c,
+                    messages: c.messages.map(m => m.id === loopAssistantMessageId ? {
+                      ...m,
+                      assistantSidebar: {
+                        activeBlock: 'processing',
+                        processing: {
+                          steps: updatedSteps,
+                          isStreaming: false,
+                          timestamp: Date.now(),
+                        },
+                      },
+                    } : m)
+                  } : c));
+
                   setIsExecutingTool(false);
                   setActiveTools([]);
 
@@ -2152,7 +2430,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
 
       await runCompletionLoop(initialContextMessages);
     },
-    [activeModel, activeConversationId, conversations, providers, settings, skills, vault, userMemory]
+    [activeModel, activeConversationId, conversations, providers, settings, vault, userMemory]
   );
 
   const stopStreaming = useCallback(() => {
@@ -2267,10 +2545,84 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
     }));
   }, [conversations]);
 
-  useEffect(() => {
-    loadSkills().then((loadedSkills) => {
-      setSkills(loadedSkills);
-    }).catch(console.error);
+  // ============ Assistant Sidebar Helpers ============
+  
+  const updateMessageThinking = useCallback((messageId: string, content: string, isStreaming?: boolean) => {
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      messages: conv.messages.map(msg => {
+        if (msg.id !== messageId) return msg;
+        return {
+          ...msg,
+          assistantSidebar: {
+            activeBlock: 'thinking',
+            thinking: {
+              content: (msg.assistantSidebar?.thinking?.content || '') + content,
+              isStreaming,
+              timestamp: Date.now(),
+            },
+          },
+        };
+      }),
+    })));
+  }, []);
+
+  const updateMessageProcessing = useCallback((messageId: string, steps: ProcessingStep[]) => {
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      messages: conv.messages.map(msg => {
+        if (msg.id !== messageId) return msg;
+        return {
+          ...msg,
+          assistantSidebar: {
+            activeBlock: 'processing',
+            processing: {
+              steps,
+              isStreaming: steps.some(s => s.status === 'running'),
+              currentStepId: steps.find(s => s.status === 'running')?.id,
+              timestamp: Date.now(),
+            },
+          },
+        };
+      }),
+    })));
+  }, []);
+
+  const updateMessageCoding = useCallback((messageId: string, blocks: CodeBlock[]) => {
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      messages: conv.messages.map(msg => {
+        if (msg.id !== messageId) return msg;
+        return {
+          ...msg,
+          assistantSidebar: {
+            activeBlock: 'coding',
+            coding: {
+              blocks,
+              isStreaming: blocks.length === 0 || !blocks[blocks.length - 1]?.code,
+              currentBlockId: blocks[blocks.length - 1]?.id,
+              timestamp: Date.now(),
+            },
+          },
+        };
+      }),
+    })));
+  }, []);
+
+  const setMessageSidebarActiveBlock = useCallback((messageId: string, block: SidebarBlockType) => {
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      messages: conv.messages.map(msg => {
+        if (msg.id !== messageId) return msg;
+        return {
+          ...msg,
+          assistantSidebar: {
+            ...msg.assistantSidebar,
+            activeBlock: block,
+          },
+        };
+      }),
+    })));
   }, []);
 
   // ============ NEW FEATURE FUNCTIONS ============
@@ -2575,10 +2927,6 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
       if (imported.settings) {
         setSettings(prev => ({ ...prev, ...imported.settings }));
       }
-      
-      if (imported.skills) {
-        setSkills(prev => [...prev, ...imported.skills]);
-      }
     } catch (err) {
       setError('Failed to import data');
       console.error(err);
@@ -2600,7 +2948,6 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         systemPrompt: settings.systemPrompt,
         streamResponses: settings.streamResponses,
         sidebarCollapsed: settings.sidebarCollapsed,
-        activeSkillId: settings.activeSkillId,
         recentModels: settings.recentModels,
         favoriteModels: settings.favoriteModels,
         quickPrompts: settings.quickPrompts,
@@ -2610,12 +2957,11 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         showTokenCount: settings.showTokenCount,
         showCostEstimate: settings.showCostEstimate,
       },
-      skills: skills,
       exportedAt: Date.now(),
     };
     
     return JSON.stringify(data, null, 2);
-  }, [conversations, settings, skills]);
+  }, [conversations, settings]);
 
   const toggleTool = useCallback((toolName: string) => {
     setToolSettings(prev => ({
@@ -2700,8 +3046,6 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         saveApiKeyToVault,
         refreshVaultState,
         hasFileSystemAccess,
-        skills,
-        setSkills,
         // New feature methods
         regenerateLastResponse,
         editLastMessage,
@@ -2723,6 +3067,7 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         toolSettings,
         toggleTool,
         resetToolSettings,
+        toolLevels,
         // Tool execution
         executeToolWithSettings,
         cancelToolExecution,
@@ -2743,6 +3088,16 @@ Respond with ONLY valid JSON array. Example format: ["fact 1", "fact 2"]`;
         // WebScraper routing
         pendingWebSearch,
         setPendingWebSearch,
+        // Assistant sidebar helpers
+        updateMessageThinking,
+        updateMessageProcessing,
+        updateMessageCoding,
+        setMessageSidebarActiveBlock,
+        // Tool leveling
+        getToolLevel,
+        recordToolCall,
+        thumbsUpTool,
+        thumbsDownTool,
       }}
     >
       {children}

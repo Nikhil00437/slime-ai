@@ -219,9 +219,9 @@ function getHelpSections(): HelpSection[] {
     },
     {
       id: 'forge',
-      title: 'Skill Forge',
+      title: 'Personality Forge',
       icon: <Zap size={16} />,
-      content: <SkillForgeSection />,
+      content: null,
     },
     {
       id: 'files',
@@ -365,11 +365,7 @@ function NavigationSection() {
 
         <NavItem
           title="Tab Bar"
-          description="Switch between Chat and Skill Forge views using the tabs at the top."
-          tips={[
-            'Chat: Send messages and interact with AI models',
-            'Skill Forge: Create and manage custom skills',
-          ]}
+          description="Switch between Chat and Web Scraper views using the tabs at the top."
         />
 
         <NavItem
@@ -986,84 +982,9 @@ function LevelRow({ level, threshold }: { level: number; threshold: number }) {
 function SkillForgeSection() {
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
-          <Zap size={22} className="text-purple-400" />
-          Skill Forge
-        </h2>
-        <p className="text-gray-400 text-sm">Create and customize AI skills</p>
-      </div>
-
-      <div className="bg-gradient-to-r from-yellow-600/10 to-orange-600/10 border border-yellow-500/20 rounded-xl p-5">
-        <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-          <Sparkles size={18} className="text-yellow-400" />
-          What is Skill Forge?
-        </h3>
-        <p className="text-sm text-gray-300 mb-3">
-          Skill Forge is where you create new skills that enhance AI responses. Each skill
-          has a rank, abilities, and can level up based on user feedback.
-        </p>
-        <ul className="space-y-2 text-sm text-gray-400">
-          <li className="flex items-center gap-2">
-            <ChevronRight size={14} className="text-yellow-400" />
-            Define skill behavior and personality
-          </li>
-          <li className="flex items-center gap-2">
-            <ChevronRight size={14} className="text-yellow-400" />
-            Set rank and rarity probabilities
-          </li>
-          <li className="flex items-center gap-2">
-            <ChevronRight size={14} className="text-yellow-400" />
-            Add abilities and special features
-          </li>
-          <li className="flex items-center gap-2">
-            <ChevronRight size={14} className="text-yellow-400" />
-            Test skills in real-time
-          </li>
-        </ul>
-      </div>
-
-      <div className="space-y-3">
-        <h3 className="text-white font-semibold">Creating a Skill</h3>
-        <ol className="space-y-3 text-sm">
-          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-600 text-white text-xs font-bold shrink-0">1</span>
-            <div>
-              <strong className="text-white">Name & Describe</strong>
-              <p className="text-gray-400 text-xs mt-1">Give your skill a name and describe what it does</p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-600 text-white text-xs font-bold shrink-0">2</span>
-            <div>
-              <strong className="text-white">Select Model</strong>
-              <p className="text-gray-400 text-xs mt-1">Choose which AI model generates the skill content</p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-600 text-white text-xs font-bold shrink-0">3</span>
-            <div>
-              <strong className="text-white">Generate & Customize</strong>
-              <p className="text-gray-400 text-xs mt-1">Let AI create initial content, then refine it</p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3 bg-gray-800/30 rounded-lg p-3 border border-gray-700">
-            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-600 text-white text-xs font-bold shrink-0">4</span>
-            <div>
-              <strong className="text-white">Save & Use</strong>
-              <p className="text-gray-400 text-xs mt-1">Save to vault and activate for use in chat</p>
-            </div>
-          </li>
-        </ol>
-      </div>
-
-      <div className="bg-purple-600/10 border border-purple-500/20 rounded-xl p-4">
-        <h3 className="text-white font-semibold mb-2">Skill Generation Model</h3>
-        <p className="text-sm text-gray-400">
-          In Settings, you can configure which model is used for skill generation.
-          More capable models (like GPT-4 or Claude) will create better skills.
-        </p>
-      </div>
+      <p className="text-gray-400 text-sm">
+        Personality Forge has been removed. Use the Personality Selector in the Chat view to select AI personalities.
+      </p>
     </div>
   );
 }
@@ -1185,7 +1106,7 @@ function SettingsSection() {
           title="Model Selectors"
           items={[
             { name: 'Summarization Model', description: 'For automatic memory summarization' },
-            { name: 'Skill Generation Model', description: 'For creating skills in Skill Forge' },
+            { name: 'Personality Generation Model', description: 'For generating personalities in Personality Forge' },
           ]}
         />
 

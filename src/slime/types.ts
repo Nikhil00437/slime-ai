@@ -1,4 +1,23 @@
+import { ToolRank, ToolLevel, TOOL_LEVEL_THRESHOLDS } from '../types';
+
 export type SkillRank = 'normal' | 'rare' | 'unique' | 'ultimate' | 'terminal';
+
+// Personality export - simplified, rankless personality for import
+export interface PersonalityExport {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  icon: string;
+  category?: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
+  createdAt: number;
+  sourceFile?: string;
+  keywords?: string[];
+  memoryTriggers?: string[];
+  compatibilityScore?: number;
+  enabled: boolean;
+  builtIn: boolean;
+}
 
 export interface SlimeSkill {
   id: string;
@@ -38,6 +57,72 @@ export interface CompatibilityResult {
 }
 
 export const LEVEL_THRESHOLDS = [0, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+
+// Tool level functions (mirrored from types.ts for internal use)
+export function getToolLevelFromCalls(totalCalls: number): number {
+  for (let i = TOOL_LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (totalCalls >= TOOL_LEVEL_THRESHOLDS[i]) {
+      return i + 1;
+    }
+  }
+  return 1;
+}
+
+export const TOOL_RANK_META: Record<ToolRank, {
+  label: string;
+  color: string;
+  icon: string;
+  glow: string;
+  border: string;
+  badge: string;
+  badgeText: string;
+}> = {
+  basic: {
+    label: 'Basic',
+    color: '#7B8FA1',
+    icon: '🔧',
+    glow: 'rgba(123,143,161,0.3)',
+    border: '#4A5568',
+    badge: '#2D3748',
+    badgeText: '#A0ADB8',
+  },
+  advanced: {
+    label: 'Advanced',
+    color: '#63B3ED',
+    icon: '⚙️',
+    glow: 'rgba(99,179,237,0.4)',
+    border: '#2B6CB0',
+    badge: '#2A4365',
+    badgeText: '#90CDF4',
+  },
+  expert: {
+    label: 'Expert',
+    color: '#B794F4',
+    icon: '🎯',
+    glow: 'rgba(183,148,244,0.5)',
+    border: '#6B46C1',
+    badge: '#44337A',
+    badgeText: '#D6BCFA',
+  },
+  master: {
+    label: 'Master',
+    color: '#FBD38D',
+    icon: '⭐',
+    glow: 'rgba(251,211,141,0.6)',
+    border: '#B7791F',
+    badge: '#744210',
+    badgeText: '#FAF089',
+  },
+  legendary: {
+    label: 'Legendary',
+    color: '#F56565',
+    icon: '🔥',
+    glow: 'rgba(245,101,101,0.6)',
+    border: '#C53030',
+    badge: '#742A2A',
+    badgeText: '#FEB2B2',
+  },
+};
 
 /** Exponential growth factor for levels beyond 10 */
 const EXPONENTIAL_GROWTH_FACTOR = 1.5;

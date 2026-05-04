@@ -68,6 +68,68 @@ export interface ChatMessage {
     outputTokens: number;
     totalTokens: number;
   };
+  // Assistant sidebar content
+  assistantSidebar?: AssistantSidebarContent;
+}
+
+// ==================== Assistant Sidebar ====================
+
+export type SidebarBlockType = 'thinking' | 'processing' | 'coding';
+
+export interface AssistantSidebarContent {
+  // Only one active at a time
+  activeBlock: SidebarBlockType | null;
+  // Thinking block content
+  thinking?: ThinkingBlock;
+  // Processing block (multi-step tool calls)
+  processing?: ProcessingBlock;
+  // Coding block with preview
+  coding?: CodingBlock;
+}
+
+export interface ThinkingBlock {
+  content: string;           // Markdown content
+  isStreaming?: boolean;     // Currently streaming
+  timestamp: number;
+}
+
+export interface ProcessingStep {
+  id: string;
+  name: string;              // Tool name or step name
+  status: 'pending' | 'running' | 'completed' | 'error';
+  input?: string;           // Input parameters (JSON string)
+  output?: string;          // Output result
+  error?: string;           // Error message if failed
+  startTime?: number;
+  endTime?: number;
+  isExpanded?: boolean;     // User can collapse/expand
+}
+
+export interface ProcessingBlock {
+  steps: ProcessingStep[];
+  isStreaming?: boolean;
+  currentStepId?: string;    // Currently running step
+  timestamp: number;
+}
+
+export type CodePreviewType = 'html' | 'markdown' | 'mermaid' | 'text' | 'json';
+
+export interface CodeBlock {
+  id: string;
+  language: string;          // Programming language
+  code: string;             // Raw code
+  previewType?: CodePreviewType;  // How to preview
+  previewContent?: string; // Rendered preview (HTML, mermaid SVG, etc.)
+  filename?: string;        // Optional filename
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface CodingBlock {
+  blocks: CodeBlock[];
+  isStreaming?: boolean;
+  currentBlockId?: string;
+  timestamp: number;
 }
 
 export interface Conversation {
@@ -84,6 +146,7 @@ export interface Conversation {
   modelIds?: string[];
   memoryEnabled?: boolean;
   agentSteps?: AgentStep[];
+  sidebarData?: any;
 }
 
 export interface AgentStep {
@@ -152,7 +215,6 @@ export interface AppSettings {
   systemPrompt: string;
   streamResponses: boolean;
   sidebarCollapsed: boolean;
-  activeSkillId: string | null;
   recentModels: string[];
   favoriteModels: string[];
   quickPrompts: QuickPrompt[];
@@ -176,6 +238,23 @@ export interface AppSettings {
   toolSettings: ToolExecutionSettings;
 }
 
+export interface Personality {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  icon: string;
+  category: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
+  builtIn: boolean;
+  enabled: boolean;
+  importedAt: number;
+  sourceFile?: string;
+  keywords?: string[];
+  memoryTriggers?: string[];
+}
+
+// Skill interface - rank/level deprecated, moved to ToolLevel
+// @deprecated Use Personality for import-only personas, use SlimeSkill for forge-generated skills
 export interface Skill {
   id: string;
   name: string;
@@ -185,6 +264,7 @@ export interface Skill {
   category: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
   builtIn: boolean;
   enabled: boolean;
+  // Deprecated - moved to ToolLevel system
   rank?: 'normal' | 'rare' | 'unique' | 'ultimate' | 'terminal';
   level?: number;
   thumbsUp?: number;
@@ -390,7 +470,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 - Cite only results provided by search tools.`,
   streamResponses: true,
   sidebarCollapsed: false,
-  activeSkillId: null,
   recentModels: [],
   favoriteModels: [],
   quickPrompts: [],
@@ -401,7 +480,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showCostEstimate: true,
   // Model selectors
   summarizationModel: '',
-  skillGenerationModel: '',
+  personalityGenerationModel: '',
   // Chat persistence
   autoSaveInterval: 30,
   offlineQueueEnabled: true,
@@ -496,12 +575,118 @@ export interface ToolDefinition {
   };
 }
 
+export type ToolRank = 'basic' | 'advanced' | 'expert' | 'master' | 'legendary';
+
+export interface ToolLevel {
+  toolId: string;
+  rank: ToolRank;
+  level: number;
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  thumbsUp: number;
+  thumbsDown: number;
+  lastUsed?: number;
+  masteryPoints: number;
+}
+
+export interface ToolUsageStats {
+  toolId: string;
+  callCount: number;
+  successCount: number;
+  failCount: number;
+  avgDuration: number;
+  lastUsed: number;
+}
+
+// Tool level thresholds (different from skills)
+export const TOOL_LEVEL_THRESHOLDS = [0, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+
+export const TOOL_RANK_META: Record<ToolRank, {
+  label: string;
+  color: string;
+  icon: string;
+  glow: string;
+  border: string;
+  badge: string;
+  badgeText: string;
+}> = {
+  basic: {
+    label: 'Basic',
+    color: '#7B8FA1',
+    icon: '🔧',
+    glow: 'rgba(123,143,161,0.3)',
+    border: '#4A5568',
+    badge: '#2D3748',
+    badgeText: '#A0ADB8',
+  },
+  advanced: {
+    label: 'Advanced',
+    color: '#63B3ED',
+    icon: '⚙️',
+    glow: 'rgba(99,179,237,0.4)',
+    border: '#2B6CB0',
+    badge: '#2A4365',
+    badgeText: '#90CDF4',
+  },
+  expert: {
+    label: 'Expert',
+    color: '#B794F4',
+    icon: '🎯',
+    glow: 'rgba(183,148,244,0.5)',
+    border: '#6B46C1',
+    badge: '#44337A',
+    badgeText: '#D6BCFA',
+  },
+  master: {
+    label: 'Master',
+    color: '#FBD38D',
+    icon: '⭐',
+    glow: 'rgba(251,211,141,0.6)',
+    border: '#B7791F',
+    badge: '#744210',
+    badgeText: '#FAF089',
+  },
+  legendary: {
+    label: 'Legendary',
+    color: '#F56565',
+    icon: '🔥',
+    glow: 'rgba(245,101,101,0.6)',
+    border: '#C53030',
+    badge: '#742A2A',
+    badgeText: '#FEB2B2',
+  },
+};
+
+/**
+ * Get the next level threshold for tools
+ */
+export function getToolNextLevelThreshold(currentLevel: number): number {
+  if (currentLevel >= TOOL_LEVEL_THRESHOLDS.length) {
+    // Exponential growth beyond predefined levels
+    const lastThreshold = TOOL_LEVEL_THRESHOLDS[TOOL_LEVEL_THRESHOLDS.length - 1];
+    return Math.floor(lastThreshold * Math.pow(1.5, currentLevel - TOOL_LEVEL_THRESHOLDS.length + 1));
+  }
+  return TOOL_LEVEL_THRESHOLDS[currentLevel];
+}
+
+/**
+ * Get rank from tool level
+ */
+export function getToolRankFromLevel(level: number): ToolRank {
+  if (level >= 5000) return 'legendary';
+  if (level >= 1000) return 'master';
+  if (level >= 250) return 'expert';
+  if (level >= 50) return 'advanced';
+  return 'basic';
+}
+
 export interface ToolSettings {
   enabled: boolean;
   requiresVault: boolean;
   description: string;
   category: 'filesystem' | 'web' | 'utility';
-  requiresApproval?: boolean; // Tools that need user confirmation before execution
+  requiresApproval?: boolean;
 }
 
 export const TOOL_SETTINGS: Record<string, ToolSettings> = {

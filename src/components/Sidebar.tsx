@@ -165,21 +165,21 @@ export const Sidebar: React.FC = () => {
           <div className="w-16 flex flex-col items-center h-full min-w-[64px]">
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="p-3 mt-3 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
+              className="p-3 mt-3 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg sidebar-icon-btn"
               title="Open sidebar"
             >
               <MessageSquare size={20} />
             </button>
             <button
               onClick={() => createConversation()}
-              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
+              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg sidebar-icon-btn"
               title="New chat"
             >
               <Plus size={20} />
             </button>
             <button
               onClick={() => setShowSettings(true)}
-              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg transition-colors"
+              className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg sidebar-icon-btn"
               title="Settings"
             >
               <Settings size={20} />
@@ -216,7 +216,7 @@ export const Sidebar: React.FC = () => {
               {/* New Chat Button */}
               <button
                 onClick={() => createConversation()}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium text-dark-900 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 transition-all shadow-md shadow-slime-500/20 hover:shadow-slime-500/30 active:scale-[0.98]"
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium text-dark-900 bg-gradient-to-r from-slime-500 to-teal-500 hover:from-slime-400 hover:to-teal-400 new-chat-btn shadow-md shadow-slime-500/20 hover:shadow-slime-500/30"
               >
                 <Plus size={18} />
                 New Chat
@@ -224,7 +224,7 @@ export const Sidebar: React.FC = () => {
             </div>
 
             {showSettings ? (
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto sidebar-scroll settings-panel">
                 <ErrorBoundary>
                   <SettingsPanel onBack={() => setShowSettings(false)} />
                 </ErrorBoundary>
@@ -243,13 +243,13 @@ export const Sidebar: React.FC = () => {
                       placeholder="Search models..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 bg-dark-900/70 border border-dark-700/40 rounded-lg text-sm text-dark-100 placeholder-dark-500 focus:outline-none focus:border-slime-500/35"
+                      className="w-full pl-9 pr-3 py-2 bg-dark-900/70 border border-dark-700/40 rounded-lg text-sm text-dark-100 placeholder-dark-500 focus:outline-none focus:border-slime-500/35 sidebar-search-input"
                     />
                   </div>
                 </div>
 
                 {/* Model List */}
-                <div className="flex-1 overflow-y-auto px-2 py-2">
+                <div className="flex-1 overflow-y-auto px-2 py-2 sidebar-scroll">
                   {searchQuery ? (
                     /* Search results (flat) */
                     <div>
@@ -270,8 +270,8 @@ export const Sidebar: React.FC = () => {
                               <button
                                 key={model.id}
                                 onClick={() => setActiveModel(model)}
-                                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors truncate ${activeModel?.id === model.id
-                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30'
+                                className={`w-full text-left px-3 py-2 rounded-md text-sm truncate model-item ${activeModel?.id === model.id
+                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30 selected'
                                     : 'text-dark-300 hover:bg-dark-700/40'
                                   }`}
                               >
@@ -288,11 +288,11 @@ export const Sidebar: React.FC = () => {
                   ) : (
                     /* Provider groups */
                     providers.map((provider) => (
-                      <div key={provider.id} className="mb-1">
+                      <div key={provider.id} className="mb-1 provider-section">
                         <div className="flex items-center justify-between">
                           <button
                             onClick={() => toggleProvider(provider.id)}
-                            className="flex-1 flex items-center justify-between px-2 py-2 text-xs font-semibold text-dark-400 hover:text-dark-100 transition-colors"
+                            className="flex-1 flex items-center justify-between px-2 py-2 text-xs font-semibold text-dark-400 hover:text-dark-100 provider-header"
                           >
                             <div className="flex items-center gap-2">
                               <span className={providerColors[provider.id]}>
@@ -338,8 +338,8 @@ export const Sidebar: React.FC = () => {
                               <button
                                 key={model.id}
                                 onClick={() => setActiveModel(model)}
-                                className={`w-full text-left px-3 py-2 ml-4 rounded-md text-sm transition-colors truncate flex items-center gap-2 ${activeModel?.id === model.id
-                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30'
+                                className={`w-full text-left px-3 py-2 ml-4 rounded-md text-sm truncate flex items-center gap-2 model-item ${activeModel?.id === model.id
+                                    ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30 selected'
                                     : 'text-dark-300 hover:bg-dark-700/40'
                                   }`}
                               >
@@ -356,10 +356,10 @@ export const Sidebar: React.FC = () => {
 
                 {/* Conversations List */}
                 <div className="border-t border-dark-700/30">
-                  <div className="flex items-center justify-between px-3 py-2">
+                  <div className="flex items-center justify-between px-3 py-2 provider-section">
                     <button
                       onClick={() => toggleSection('conversations')}
-                      className="flex items-center gap-2 text-xs font-semibold text-dark-500 uppercase tracking-wider hover:text-dark-300"
+                      className="flex items-center gap-2 text-xs font-semibold text-dark-500 uppercase tracking-wider hover:text-dark-300 provider-header"
                     >
                       {collapsedSections.has('conversations') ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
                       Recent Chats
@@ -407,7 +407,7 @@ export const Sidebar: React.FC = () => {
                   </div>
 
                   {!collapsedSections.has('conversations') && (
-                    <div className="flex-1 overflow-y-auto max-h-60 pb-2">
+                    <div className="flex-1 overflow-y-auto max-h-60 pb-2 sidebar-scroll">
                       {sortedConversations.length === 0 ? (
                         <p className="text-sm text-dark-600 px-3 py-4 text-center">
                           No conversations yet
@@ -439,7 +439,7 @@ export const Sidebar: React.FC = () => {
                           return (
                             <div
                               key={conv.id}
-                              className={`group sidebar-item flex items-start gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${activeConversationId === conv.id
+                              className={`group sidebar-conversation-item flex items-start gap-2 mx-2 px-3 py-2 rounded-lg cursor-pointer ${activeConversationId === conv.id
                                   ? 'active text-dark-100'
                                   : 'text-dark-400 hover:text-dark-200'
                                 } ${conv.isPinned ? 'bg-slime-500/5' : ''} ${swipedConvId === conv.id ? 'bg-red-900/30' : ''}`}
@@ -462,7 +462,7 @@ export const Sidebar: React.FC = () => {
                                 className="flex-1 flex flex-col items-start gap-1 text-left min-w-0"
                               >
                                 <div className="flex items-center gap-2 w-full">
-                                  {conv.isPinned && <Pin size={10} className="text-amber-400 shrink-0" />}
+                                  {conv.isPinned && <Pin size={10} className="text-amber-400 shrink-0 pin-icon" />}
                                   <MessageSquare size={14} className="shrink-0 mt-0.5" />
                                   <span className="truncate text-sm font-medium">{conv.title}</span>
                                 </div>
@@ -477,7 +477,7 @@ export const Sidebar: React.FC = () => {
                               </button>
                               {/* Unread indicator (if new messages since last view) */}
                               {conv.messages.length > 0 && activeConversationId !== conv.id && (
-                                <span className="w-2 h-2 bg-slime-500 rounded-full shrink-0 mt-2" />
+                                <span className="w-2 h-2 bg-slime-500 rounded-full shrink-0 mt-2 unread-indicator" />
                               )}
 
                               {/* Conversation menu */}
@@ -487,7 +487,7 @@ export const Sidebar: React.FC = () => {
                                     e.stopPropagation();
                                     setShowConvMenuId(showConvMenuId === conv.id ? null : conv.id);
                                   }}
-                                  className="p-1 opacity-0 group-hover:opacity-100 text-dark-500 hover:text-dark-100 transition-all btn-press"
+                                  className="p-1 text-dark-500 hover:text-dark-100 conv-menu-btn btn-press"
                                 >
                                   <MoreVertical size={12} />
                                 </button>

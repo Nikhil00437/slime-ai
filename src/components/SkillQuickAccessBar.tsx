@@ -1,7 +1,7 @@
 /**
- * Skill Quick Access Bar
+ * Personality Quick Access Bar
  * Phase 2: Enhanced UI/UX
- * Quick-access icon bar for pinning favorite skills above chat input
+ * Quick-access icon bar for pinning favorite personalities above chat input
  */
 
 import React, { useState } from 'react';

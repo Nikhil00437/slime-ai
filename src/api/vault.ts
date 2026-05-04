@@ -3,6 +3,7 @@ import { Conversation, ChatMessage } from '../types';
 const CHATS_FOLDER = 'chats';
 const MEMORY_FOLDER = 'memory';
 const WEBSCRAPER_FOLDER = 'webscrape';
+const DATA_FOLDER = 'data';
 const DB_NAME = 'Slime-vault';
 const DB_VERSION = 1;
 const HANDLE_STORE = 'handles';
@@ -199,6 +200,11 @@ function conversationToMarkdown(conv: Conversation): string {
     frontmatterLines.push(`agentSteps: ${JSON.stringify(conv.agentSteps)}`);
   }
   
+  // Add sidebar data if present
+  if (conv.sidebarData) {
+    frontmatterLines.push(`sidebarData: ${JSON.stringify(conv.sidebarData)}`);
+  }
+  
   const lines: string[] = [
     '---',
     ...frontmatterLines,
@@ -299,6 +305,25 @@ function markdownToConversation(
 
         const sectionContent = match[3].trim();
 
+        // Extract sidebar data if present
+        let assistantSidebar: any;
+        const sidebarMatch = sectionContent.match(/\[sidebar:\s*(.+?)\]/s);
+        if (sidebarMatch) {
+          const blockType = sidebarMatch[1] as SidebarBlockType;
+          
+          // Extract specific sidebar content
+          const thinkingMatch = sectionContent.match(/\[thinking:\s*({[\s\S]*})\]/s);
+          const processingMatch = sectionContent.match(/\[processing:\s*({[\s\S]*})\]/s);
+          const codingMatch = sectionContent.match(/\[coding:\s*({[\s\S]*})\]/s);
+          
+          assistantSidebar = {
+            activeBlock: blockType,
+            ...(thinkingMatch && { thinking: JSON.parse(thinkingMatch[1]) }),
+            ...(processingMatch && { processing: JSON.parse(processingMatch[1]) }),
+            ...(codingMatch && { coding: JSON.parse(codingMatch[1]) }),
+          };
+        }
+
         // Extract toolCalls if present (handles both objects and arrays)
         let toolCalls: any[] | undefined;
         const toolCallsMatch = sectionContent.match(/\[toolCalls:\s*(\{.*?\}|\[.*?\])/s);
@@ -319,8 +344,12 @@ function markdownToConversation(
           toolCallId = toolCallIdMatch[1].trim();
         }
 
-        // Remove the toolCalls and toolCallId markers from content
+        // Remove the sidebar, toolCalls, and toolCallId markers from content
         let cleanContent = sectionContent
+          .replace(/\[sidebar:\s*.+?\]/gs, '')
+          .replace(/\[thinking:\s*{[\s\S]*}\]/gs, '')
+          .replace(/\[processing:\s*{[\s\S]*}\]/gs, '')
+          .replace(/\[coding:\s*{[\s\S]*}\]/gs, '')
           .replace(/\[toolCalls:\s*(\{.*?\}|\[.*?\])\]/gs, '')
           .replace(/\[toolCallId:\s*.*?\]/gs, '')
           .trim();
@@ -349,6 +378,7 @@ function markdownToConversation(
       modelIds: Array.isArray(frontmatter.models) ? frontmatter.models : undefined,
       memoryEnabled: String(frontmatter.memoryEnabled) === 'true',
       agentSteps: Array.isArray(frontmatter.agentSteps) ? (frontmatter.agentSteps as any[]) : undefined,
+      sidebarData: frontmatter.sidebarData,
     };
   } catch {
     return null;
@@ -650,66 +680,40 @@ export function isVaultConnected(): boolean {
   return vaultHandle !== null;
 }
 
-const SKILLS_FOLDER = 'skills';
+/* ── Tool Levels Storage ── */
 
-export async function saveSkillsToVault(skills: any[]): Promise<boolean> {
+const TOOL_LEVELS_FILE = 'tool-levels.json';
+
+export async function saveToolLevelsToVault(levels: Record<string, any>): Promise<boolean> {
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
   try {
-    const skillsFolder = await getOrCreateFolder(handle, SKILLS_FOLDER);
-    
-    const gluttony = skills.find(s => s.id === 'gluttony-skill');
-    if (gluttony) {
-      const gluttonyFile = await skillsFolder.getFileHandle('gluttony.skill', { create: true });
-      const writable = await gluttonyFile.createWritable();
-      await writable.write(JSON.stringify(gluttony, null, 2));
-      await writable.close();
-    }
-
-    const customSkills = skills.filter(s => s.id !== 'gluttony-skill');
-    for (const skill of customSkills) {
-      const fileName = `${skill.id}.skill`;
-      const fileHandle = await skillsFolder.getFileHandle(fileName, { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(JSON.stringify(skill, null, 2));
-      await writable.close();
-    }
-    
+    const dataFolder = await getOrCreateFolder(handle, DATA_FOLDER);
+    const fileHandle = await dataFolder.getFileHandle(TOOL_LEVELS_FILE, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(levels, null, 2));
+    await writable.close();
     return true;
   } catch (err) {
-    console.error('Failed to save skills to vault:', err);
+    console.error('Failed to save tool levels to vault:', err);
     return false;
   }
 }
 
-export async function loadSkillsFromVault(): Promise<any[]> {
+export async function loadToolLevelsFromVault(): Promise<Record<string, any>> {
   const handle = await restoreVaultHandle();
-  if (!handle) return [];
+  if (!handle) return {};
 
   try {
-    const skillsFolder = await getOrCreateFolder(handle, SKILLS_FOLDER);
-    const skills: any[] = [];
-
-    for await (const entry of (skillsFolder as any).values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.skill') || entry.name.endsWith('.json'))) {
-        try {
-          const file = await entry.getFile();
-          const content = await file.text();
-          const skill = JSON.parse(content);
-          if (skill.id && skill.name) {
-            skills.push(skill);
-          }
-        } catch (err) {
-          console.warn('Failed to read skill file:', entry.name, err);
-        }
-      }
-    }
-
-    return skills;
+    const dataFolder = await getOrCreateFolder(handle, DATA_FOLDER);
+    const fileHandle = await dataFolder.getFileHandle(TOOL_LEVELS_FILE);
+    const file = await fileHandle.getFile();
+    const content = await file.text();
+    return JSON.parse(content);
   } catch (err) {
-    console.error('Failed to load skills from vault:', err);
-    return [];
+    // File doesn't exist yet - return empty
+    return {};
   }
 }
 
