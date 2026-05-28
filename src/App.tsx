@@ -1,16 +1,75 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { AppProvider, useAppContext } from './store/AppContext';
+import { useAppStore } from './store/useAppStore';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
-import WebScraper from './components/WebScraper';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette';
 import { HelpPalette, useHelpPalette } from './components/HelpPalette';
-import { SidebarManager, AssistantSidebarContent } from './components/SidebarManager';
-import { MessageSquare, Command, HelpCircle, Bug } from 'lucide-react';
+import { SidebarManager } from './components/SidebarManager';
+import { AssistantSidebarContent } from './types';
+import { MessageSquare, Command, HelpCircle, Bug, Loader2, BarChart3, Database, BookOpen, AlertTriangle } from 'lucide-react';
 import { ToastProvider } from './components/Toast';
 import { initFavicon, setFaviconStatus } from './utils/favicon';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { ErrorBoundary, withErrorBoundary } from './components/ErrorBoundary';
 import { initErrorLogging } from './api/errorLogging';
+import { RagProvider } from './store/RagContext';
+
+// Lazy load heavy components for code splitting
+const WebScraper = lazy(() => import('./components/WebScraper'));
+const SettingsPanel = lazy(() => import('./components/SettingsPanel').then(m => ({ default: m.SettingsPanel })));
+const MemoryPanel = lazy(() => import('./components/MemoryPanel').then(m => ({ default: m.MemoryPanel })));
+const RagPanel = lazy(() => import('./components/RagPanel').then(m => ({ default: m.RagPanel })));
+
+// Loading fallback component
+function ComponentLoader() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="w-8 h-8 animate-spin text-green-500" />
+      <span className="ml-2 text-gray-400">Loading...</span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FEATURE ERROR BOUNDARY - Section 10.2.2: Per-Feature Error Boundaries
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface FeatureErrorProps {
+  name: string;
+  onRetry: () => void;
+  onGoHome?: () => void;
+}
+
+function FeatureError({ name, onRetry, onGoHome }: FeatureErrorProps) {
+  const handleGoHome = onGoHome || onRetry;
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-6">
+      <div className="bg-dark-800/80 backdrop-blur-sm rounded-2xl border border-red-500/30 p-6 max-w-sm w-full text-center">
+        <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="w-6 h-6 text-red-400" />
+        </div>
+        <h3 className="text-lg font-semibold text-white mb-2">{name} Error</h3>
+        <p className="text-sm text-dark-400 mb-4">
+          This feature encountered an error and couldn't load.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={onRetry}
+            className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+          >
+            Try Again
+          </button>
+          <button
+            onClick={handleGoHome}
+            className="px-3 py-2 bg-dark-700 hover:bg-dark-600 text-dark-300 text-sm rounded-lg transition-colors"
+          >
+            Go to Chat
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AMBIENT BACKGROUND - from ui-improvements
@@ -56,12 +115,14 @@ function AmbientBackground() {
   );
 }
 
-type Tab = 'chat' | 'scraper';
+type Tab = 'chat' | 'scraper' | 'memory' | 'settings' | 'knowledge';
 
 function AppContent() {
   const { error, setError, isLoading, pendingWebSearch, setPendingWebSearch } = useAppContext();
   const [showError, setShowError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'chat' | 'scraper'>('chat');
+  const [tab, setTab] = useState<Tab>('chat');
+  const [retryKey, setRetryKey] = useState(0);
+  const handleRetry = () => setRetryKey(prev => prev + 1);
   const { isOpen: isCommandPaletteOpen, setIsOpen: setCommandPaletteOpen } = useCommandPalette();
   const { isOpen: isHelpOpen, setIsOpen: setHelpOpen } = useHelpPalette();
 
@@ -117,39 +178,43 @@ function AppContent() {
       <Sidebar />
 
       <div className="flex flex-col flex-1 min-w-0">
-        {/* Tab bar */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '6px 12px',
-          borderBottom: '1px solid rgba(34, 197, 94, 0.08)',
-          background: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(24px)',
-          flexShrink: 0,
-        }}>
-          <TabBtn active={tab === 'chat'} onClick={() => setTab('chat')} icon={<MessageSquare size={14} />} label="Chat" />
-          <TabBtn active={tab === 'scraper'} onClick={() => setTab('scraper')} icon={<Bug size={14} />} label="Web Scraper" />
+        {/* Sleek Top Bar - Qwen-inspired */}
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-dark-700/20 bg-dark-900/80 backdrop-blur-xl shrink-0">
+          <TabBtn active={tab === 'chat'} onClick={() => setTab('chat')} icon={<MessageSquare size={15} />} label="Chat" />
+          <TabBtn active={tab === 'scraper'} onClick={() => setTab('scraper')} icon={<Bug size={15} />} label="Scraper" />
+          <TabBtn active={tab === 'memory'} onClick={() => setTab('memory')} icon={<Database size={15} />} label="Memory" />
+          <TabBtn active={tab === 'knowledge'} onClick={() => setTab('knowledge')} icon={<BookOpen size={15} />} label="Knowledge" />
+          <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} icon={<HelpCircle size={15} />} label="Settings" />
           
-          {/* Command Palette Trigger */}
-          <button
-            onClick={() => setCommandPaletteOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 text-xs text-dark-500 hover:text-dark-300 hover:bg-dark-700/40 rounded transition-colors"
-            title="Command Palette (Ctrl+K)"
-          >
-            <Command size={12} />
-            <kbd className="kbd">Ctrl+K</kbd>
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            {/* Command Palette Trigger */}
+            <button
+              onClick={() => setCommandPaletteOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-dark-500 hover:text-dark-300 hover:bg-dark-700/40 rounded-md transition-colors"
+              title="Command Palette (Ctrl+K or ⌘K)"
+            >
+              <Command size={13} />
+              <span className="kbd-container hidden sm:inline-flex">
+                <kbd className="kbd text-[10px]">Ctrl</kbd>
+                <span className="text-dark-600">+</span>
+                <kbd className="kbd text-[10px]">K</kbd>
+              </span>
+            </button>
 
-          {/* Help Palette Trigger */}
-          <button
-            onClick={() => setHelpOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 text-xs text-dark-500 hover:text-dark-300 hover:bg-dark-700/40 rounded transition-colors"
-            title="Help (Ctrl+H)"
-          >
-            <HelpCircle size={12} />
-            <kbd className="kbd">Ctrl+H</kbd>
-          </button>
+            {/* Help Palette Trigger */}
+            <button
+              onClick={() => setHelpOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-dark-500 hover:text-dark-300 hover:bg-dark-700/40 rounded-md transition-colors"
+              title="Help (Ctrl+H or ⌘H)"
+            >
+              <HelpCircle size={13} />
+              <span className="kbd-container hidden sm:inline-flex">
+                <kbd className="kbd text-[10px]">Ctrl</kbd>
+                <span className="text-dark-600">+</span>
+                <kbd className="kbd text-[10px]">H</kbd>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
@@ -159,14 +224,40 @@ function AppContent() {
             style={{ animationDuration: '200ms' }}
           >
             {tab === 'chat' ? (
-              <ChatPanel
-                onOpenScraper={() => setTab('scraper')}
-                rightSidebarOpen={rightSidebarOpen}
-                onRightSidebarOpen={setRightSidebarOpen}
-                onRightSidebarContentChange={setRightSidebarContent}
-                onRightSidebarStreamingChange={setRightSidebarStreaming}
-              />
-            ) : tab === 'forge' ? null : <WebScraper />}
+              <ErrorBoundary key={retryKey} fallback={<FeatureError name="Chat" onRetry={handleRetry} onGoHome={() => setTab('chat')} />}>
+                <ChatPanel
+                  onOpenScraper={() => setTab('scraper')}
+                  rightSidebarOpen={rightSidebarOpen}
+                  onRightSidebarOpen={setRightSidebarOpen}
+                  onRightSidebarContentChange={setRightSidebarContent}
+                  onRightSidebarStreamingChange={setRightSidebarStreaming}
+                />
+              </ErrorBoundary>
+            ) : tab === 'scraper' ? (
+              <Suspense fallback={<ComponentLoader />}>
+                <ErrorBoundary key={retryKey} fallback={<FeatureError name="Web Scraper" onRetry={handleRetry} onGoHome={() => setTab('chat')} />}>
+                  <WebScraper />
+                </ErrorBoundary>
+              </Suspense>
+            ) : tab === 'memory' ? (
+              <Suspense fallback={<ComponentLoader />}>
+                <ErrorBoundary key={retryKey} fallback={<FeatureError name="Memory Panel" onRetry={handleRetry} onGoHome={() => setTab('chat')} />}>
+                  <MemoryPanel onClose={() => setTab('chat')} />
+                </ErrorBoundary>
+              </Suspense>
+            ) : tab === 'knowledge' ? (
+              <Suspense fallback={<ComponentLoader />}>
+                <ErrorBoundary key={retryKey} fallback={<FeatureError name="Knowledge" onRetry={handleRetry} onGoHome={() => setTab('chat')} />}>
+                  <RagPanel onClose={() => setTab('chat')} />
+                </ErrorBoundary>
+              </Suspense>
+            ) : tab === 'settings' ? (
+              <Suspense fallback={<ComponentLoader />}>
+                <ErrorBoundary key={retryKey} fallback={<FeatureError name="Settings" onRetry={handleRetry} onGoHome={() => setTab('chat')} />}>
+                  <SettingsPanel onBack={() => setTab('chat')} />
+                </ErrorBoundary>
+              </Suspense>
+            ) : null}
           </div>
         </div>
       </div>
@@ -216,33 +307,24 @@ function AppContent() {
   );
 }
 
-function TabBtn({ active, onClick, icon, label, accent }: {
+function TabBtn({ active, onClick, icon, label }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  accent?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 6,
-        padding: '5px 12px', borderRadius: 8, cursor: 'pointer',
-        fontSize: 13, fontWeight: active ? 600 : 400,
-        background: active
-          ? (accent ? 'rgba(34, 197, 94, 0.15)' : 'rgba(6, 182, 212, 0.12)')
-          : 'transparent',
-        border: active
-          ? `1px solid ${accent ? 'rgba(34, 197, 94, 0.4)' : 'rgba(6, 182, 212, 0.3)'}`
-          : '1px solid transparent',
-        color: active
-          ? (accent ? '#4ade80' : '#22d3ee')
-          : 'rgba(148, 163, 184, 0.5)',
-        transition: 'all 0.15s',
-      }}
+      title={label}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm transition-all duration-150 ${
+        active
+          ? 'bg-slime-500/12 text-slime-400 border border-slime-500/25 font-medium shadow-sm'
+          : 'text-dark-500 hover:text-dark-300 hover:bg-dark-700/30 border border-transparent'
+      }`}
     >
-      {icon} {label}
+      {icon}
+      <span className="hidden sm:inline">{label}</span>
     </button>
   );
 }
@@ -294,11 +376,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AppProvider>
-        <ToastProvider>
-          <GracefulDegradation>
-            <AppContent />
-          </GracefulDegradation>
-        </ToastProvider>
+        <RagProvider>
+          <ToastProvider>
+            <GracefulDegradation>
+              <AppContent />
+            </GracefulDegradation>
+          </ToastProvider>
+        </RagProvider>
       </AppProvider>
     </ErrorBoundary>
   );

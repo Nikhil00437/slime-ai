@@ -7,7 +7,7 @@ export interface Provider {
   apiKey?: string;
   enabled: boolean;
   models: ModelInfo[];
-  status: 'connected' | 'disconnected' | 'checking';
+  status: 'connected' | 'disconnected' | 'checking' | 'error';
   requiresVault?: boolean;
 }
 
@@ -27,6 +27,7 @@ export interface ModelInfo {
   provider: ProviderType;
   parameters?: string;
   capabilities?: ModelCapabilities;
+  isFavorite?: boolean;
 }
 
 export interface ToolCall {
@@ -225,7 +226,7 @@ export interface AppSettings {
   showCostEstimate: boolean;
   // Model selectors
   summarizationModel: string;
-  skillGenerationModel: string;
+  personalityGenerationModel: string;
   // Chat persistence
   autoSaveInterval: number;
   offlineQueueEnabled: boolean;
@@ -244,101 +245,27 @@ export interface Personality {
   description: string;
   systemPrompt: string;
   icon: string;
-  category: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
+  category: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom' | 'guidance' | 'thinking' | 'motivation' | 'contemplation' | 'debate' | 'wisdom' | 'disruption';
   builtIn: boolean;
   enabled: boolean;
-  importedAt: number;
+  importedAt?: number;
   sourceFile?: string;
   keywords?: string[];
   memoryTriggers?: string[];
 }
 
-// Skill interface - rank/level deprecated, moved to ToolLevel
-// @deprecated Use Personality for import-only personas, use SlimeSkill for forge-generated skills
-export interface Skill {
+export type MemoryCategory = 'perpetually' | 'periodically' | 'ephemerally';
+
+export interface MemoryEntry {
   id: string;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  icon: string;
-  category: 'coding' | 'writing' | 'analysis' | 'creative' | 'custom';
-  builtIn: boolean;
-  enabled: boolean;
-  // Deprecated - moved to ToolLevel system
-  rank?: 'normal' | 'rare' | 'unique' | 'ultimate' | 'terminal';
-  level?: number;
-  thumbsUp?: number;
-  thumbsDown?: number;
-  isDefault?: boolean;
-  keywords?: string[];
-  memoryTriggers?: string[];
+  content: string;
+  category: MemoryCategory;
+  createdAt: number;
+  lastAccessed: number;
+  chatId?: string;
 }
-
-export const DEFAULT_SKILLS: Skill[] = [
-  {
-    id: 'code-expert',
-    name: 'Code Expert',
-    description: 'Enhanced coding: step-by-step reasoning, best practices, edge cases',
-    systemPrompt: 'You are an expert software engineer. Provide precise, well-commented code. Reason through problems step by step. Flag edge cases and potential bugs. Prefer idiomatic solutions.',
-    icon: '💻',
-    category: 'coding',
-    builtIn: true,
-    enabled: true,
-    keywords: ['code', 'programming', 'function', 'class', 'algorithm', 'debug', 'implement', 'syntax', 'bug', 'error', 'refactor', 'optimize', 'api', 'frontend', 'backend', 'web', 'react', 'python', 'javascript', 'typescript', 'sql', 'database'],
-    memoryTriggers: ['i am a', "i'm a", 'i work as', 'my stack', 'my tech', 'i use', 'i prefer', 'my code'],
-  },
-  {
-    id: 'creative-writer',
-    name: 'Creative Writer',
-    description: 'Storytelling, poetry, world-building',
-    systemPrompt: 'You are a creative writing expert with a flair for vivid prose, compelling characters, and evocative imagery. Embrace the user\'s creative vision. Suggest and explore narrative possibilities.',
-    icon: '✍️',
-    category: 'writing',
-    builtIn: true,
-    enabled: true,
-    keywords: ['write', 'story', 'poem', 'poetry', 'creative', 'fiction', 'narrative', 'character', 'plot', 'novel', 'script', 'dialogue', 'verse', 'rhym', 'metaphor'],
-    memoryTriggers: ['i like', 'my favorite', 'i enjoy', 'i want'],
-  },
-  {
-    id: 'research-analyst',
-    name: 'Research Analyst',
-    description: 'Deep analysis, structured breakdowns, citations',
-    systemPrompt: 'You are a rigorous research analyst. Structure your responses with clear sections. Distinguish facts from inference. Highlight uncertainties. When citing, name sources clearly.',
-    icon: '🔬',
-    category: 'analysis',
-    builtIn: true,
-    enabled: true,
-    keywords: ['research', 'analyze', 'analysis', 'study', 'report', 'data', 'findings', 'summary', 'conclusion', 'evidence', 'source', 'cite', 'reference'],
-    memoryTriggers: ['i am', "i'm", 'my name is', 'i work', 'i study', 'research'],
-  },
-  {
-    id: 'teacher',
-    name: 'Teacher',
-    description: 'Clear explanations, analogies, Socratic method',
-    systemPrompt: 'You are a patient, skilled teacher. Break complex topics into digestible steps. Use analogies and concrete examples. Check for understanding. Encourage questions.',
-    icon: '🎓',
-    category: 'analysis',
-    builtIn: true,
-    enabled: true,
-    keywords: ['explain', 'teach', 'learn', 'understand', 'concept', 'how does', 'what is', 'why does', 'tutorial', 'lesson', 'explain', 'help me understand'],
-    memoryTriggers: ['i am', "i'm", "i don't understand", 'can you explain', 'help me learn'],
-  },
-  {
-    id: 'debate-partner',
-    name: 'Debate Partner',
-    description: 'Steelman arguments, expose weaknesses',
-    systemPrompt: 'You are a sharp debate partner. Steelman the strongest version of any argument. Point out logical fallacies. Present counterarguments without bias. Push the user to think harder.',
-    icon: '⚖️',
-    category: 'analysis',
-    builtIn: true,
-    enabled: true,
-    keywords: ['debate', 'argument', 'disagree', 'counter', 'prove', '反驳', 'argue', 'pros', 'cons', 'discussion', 'opposing'],
-    memoryTriggers: ['i think', 'i believe', 'i feel', 'my opinion'],
-  },
-];
-
 // Personality Presets - Rotating lineup of AI personas
-export const PERSONALITY_PRESETS: Skill[] = [
+export const PERSONALITY_PRESETS: Personality[] = [
   {
     id: 'mentor',
     name: 'Mentor',
@@ -438,7 +365,7 @@ export const PERSONALITY_PRESETS: Skill[] = [
 ];
 
 // Default values used in DEFAULT_SETTINGS (not exported, must be defined first)
-const DEFAULT_LOOP_CONFIG: LoopConfig = {
+export const DEFAULT_LOOP_CONFIG: LoopConfig = {
   maxIterations: 10,
   iterationTimeout: 120000,
   stopCondition: 'manual',
@@ -460,14 +387,7 @@ const DEFAULT_TOOL_SETTINGS_VAL: ToolExecutionSettings = {
 export const DEFAULT_SETTINGS: AppSettings = {
   temperature: 0.7,
   maxTokens: 4096,
-  systemPrompt: `You are a helpful assistant.
-
-## Tool Use Rules
-- Use search tools for factual/current queries about news, prices, weather, or real-time information.
-- If search tool returns {error} or empty results: respond "Search unavailable. Answering from internal knowledge."
-- NEVER invent URLs, titles, or snippets when tools fail.
-- Clearly state uncertainty when information may be outdated.
-- Cite only results provided by search tools.`,
+  systemPrompt: '',
   streamResponses: true,
   sidebarCollapsed: false,
   recentModels: [],
