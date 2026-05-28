@@ -63,39 +63,6 @@ export function ModelItemSkeleton() {
   );
 }
 
-export function SkillCardSkeleton() {
-  return (
-    <div
-      style={{
-        background: 'rgba(55, 65, 81, 0.3)',
-        border: '1px solid rgba(75, 85, 99, 0.3)',
-        borderRadius: 12,
-        padding: '14px 16px',
-      }}
-    >
-      <div className="flex items-start gap-3">
-        <Skeleton variant="rectangular" width={38} height={38} />
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <Skeleton width="40%" height="1em" />
-            <Skeleton width={60} height={20} />
-          </div>
-          <Skeleton width="90%" height="0.75em" className="mb-1" />
-          <Skeleton width="70%" height="0.75em" />
-        </div>
-      </div>
-      <div className="flex gap-2 mt-3">
-        <Skeleton width={60} height={22} />
-        <Skeleton width={80} height={22} />
-        <Skeleton width={50} height={22} />
-      </div>
-      <div className="mt-3">
-        <Skeleton width="100%" height={4} />
-      </div>
-    </div>
-  );
-}
-
 export function ConversationItemSkeleton() {
   return (
     <div className="flex items-start gap-2 mx-2 px-3 py-3">

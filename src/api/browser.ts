@@ -328,7 +328,7 @@ export async function act(
           
           await locator.first().click({ 
             button: clickAction.button || 'left',
-            double: clickAction.double || false,
+            clickCount: clickAction.double ? 2 : 1,
           });
           
           data.clickedElement = clickAction.selector;

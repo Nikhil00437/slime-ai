@@ -28,6 +28,31 @@ import {
   X,
 } from "lucide-react";
 import { useAppContext } from "../store/AppContext";
+
+// CORS proxy helpers for WebScraper
+const CORS_PROXIES = [
+  (url: string) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://corsproxy.org/?${encodeURIComponent(url)}`,
+];
+
+async function fetchWithCorsProxy(url: string, options: RequestInit = {}): Promise<Response> {
+  // Try direct first
+  try {
+    const res = await fetch(url, options);
+    if (res.ok) return res;
+  } catch {}
+
+  // Try proxies
+  for (const proxyFn of CORS_PROXIES) {
+    try {
+      const res = await fetch(proxyFn(url), options);
+      if (res.ok) return res;
+    } catch {}
+  }
+
+  throw new Error('All fetch attempts failed');
+}
 import { saveScrapedPagesToVault, loadScrapedPagesFromVault, WebScrapedPage, isVaultConnected } from "../api/vault";
 
 /* ── Types ── */
@@ -458,9 +483,9 @@ if __name__ == "__main__":
 /* ── Real Web Search via DuckDuckGo HTML ── */
 async function searchDuckDuckGo(query: string, maxResults = 10): Promise<SearchResult[]> {
   const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-  
+
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
+  const response = await fetchWithCorsProxy(url, {
     headers: { "User-Agent": USER_AGENT },
   });
   
@@ -503,12 +528,54 @@ async function searchDuckDuckGo(query: string, maxResults = 10): Promise<SearchR
   return results;
 }
 
-/* ── Real Page Scraping via Jina AI Reader ── */
+/* ── Crawl4AI API Configuration ── */
+const CRAWL4AI_API_URL = "http://localhost:11235";
+
+/* ── Real Page Scraping via Crawl4AI API ── */
+async function scrapePageWithCrawl4AI(url: string, signal?: AbortSignal): Promise<{ title: string; content: string }> {
+  const controller = new AbortController();
+  if (signal) {
+    signal.addEventListener('abort', () => controller.abort());
+  }
+
+  const response = await fetch(`${CRAWL4AI_API_URL}/scrape`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls: [url], delay: 0.5 }),
+    signal: controller.signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Crawl4AI API failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+  
+  if (!data.results || data.results.length === 0) {
+    throw new Error('No results from Crawl4AI');
+  }
+
+  const result = data.results[0];
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Failed to scrape');
+  }
+
+  // Use fit_markdown for better content extraction
+  const content = result.fit_markdown || result.content || '';
+  
+  return {
+    title: result.title || 'Untitled',
+    content: content.slice(0, 50000), // Limit content size
+  };
+}
+
+/* ── Real Page Scraping via Jina AI Reader (Fallback) ── */
 async function scrapePageWithJina(url: string, signal?: AbortSignal): Promise<{ title: string; content: string }> {
   const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
   const readerUrl = `https://r.jina.ai/read/${encodeURIComponent(cleanUrl)}`;
-  
-  const response = await fetch(readerUrl, { signal });
+
+  const response = await fetchWithCorsProxy(readerUrl, { signal });
   
   if (!response.ok) {
     throw new Error(`Failed to fetch: ${response.status}`);
@@ -536,6 +603,20 @@ async function scrapePageWithJina(url: string, signal?: AbortSignal): Promise<{ 
     .slice(0, 50000); // Limit content size
   
   return { title, content };
+}
+
+/* ── Unified Scrape Function with Fallback ── */
+async function scrapePage(url: string, signal?: AbortSignal, useCrawl4AI: boolean = false): Promise<{ title: string; content: string }> {
+  if (useCrawl4AI) {
+    try {
+      return await scrapePageWithCrawl4AI(url, signal);
+    } catch (crawl4aiError) {
+      console.warn('Crawl4AI failed, falling back to Jina:', crawl4aiError);
+      // Fall through to Jina fallback
+    }
+  }
+  // Default to Jina
+  return scrapePageWithJina(url, signal);
 }
 
 /* ── TF-IDF Implementation ── */
@@ -723,6 +804,10 @@ function WebScraper() {
   const [scrapeDone, setScrapeDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // Scrape method: "crawl4ai" or "jina"
+  const [scrapeMethod, setScrapeMethod] = useState<"crawl4ai" | "jina">("jina");
+  const [isCrawl4AIAvailable, setIsCrawl4AIAvailable] = useState(false);
+  
   // Selection state for links to scrape
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -773,6 +858,22 @@ function WebScraper() {
       }
     };
     loadFromVault();
+  }, []);
+
+  // Check crawl4ai API availability on mount
+  useEffect(() => {
+    const checkCrawl4AI = async () => {
+      try {
+        const response = await fetch(`${CRAWL4AI_API_URL}/health`, { 
+          method: 'GET',
+          signal: AbortSignal.timeout(3000)
+        });
+        setIsCrawl4AIAvailable(response.ok);
+      } catch {
+        setIsCrawl4AIAvailable(false);
+      }
+    };
+    checkCrawl4AI();
   }, []);
 
   // Pre-fill query from pending web search
@@ -853,13 +954,14 @@ function WebScraper() {
     setIsScraping(true);
     const pages: ScrapedPage[] = [];
     const abortController = new AbortController();
+    const useCrawl4AI = scrapeMethod === "crawl4ai" && isCrawl4AIAvailable;
     
     try {
       for (const r of results) {
         if (!urlsToScrape.has(r.url)) continue;
         
         try {
-          const scraped = await scrapePageWithJina(r.url, abortController.signal);
+          const scraped = await scrapePage(r.url, abortController.signal, useCrawl4AI);
           pages.push({
             title: scraped.title || r.title,
             url: r.url,
@@ -888,7 +990,7 @@ function WebScraper() {
     setIsScraping(false);
     setScrapeDone(true);
     setIsSelectionMode(false);
-  }, [results, query, selectedUrls]);
+  }, [results, query, selectedUrls, scrapeMethod, isCrawl4AIAvailable]);
 
   const handleSaveToVault = useCallback(async () => {
     if (!scrapedPages.length) return;
@@ -1078,6 +1180,41 @@ function WebScraper() {
                     {error}
                   </div>
                 )}
+
+                {/* Scrape Method Toggle */}
+                <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-slate-900/40 border border-slate-700/40">
+                  <span className="text-sm text-slate-400">Scraper:</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setScrapeMethod("jina")}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                        scrapeMethod === "jina"
+                          ? "bg-violet-600/80 text-white"
+                          : "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
+                      }`}
+                    >
+                      Jina AI
+                    </button>
+                    <button
+                      onClick={() => setScrapeMethod("crawl4ai")}
+                      disabled={!isCrawl4AIAvailable}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                        scrapeMethod === "crawl4ai"
+                          ? "bg-cyan-600/80 text-white"
+                          : isCrawl4AIAvailable
+                          ? "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
+                          : "bg-slate-800/30 text-slate-600 cursor-not-allowed opacity-50"
+                      }`}
+                    >
+                      Crawl4AI {isCrawl4AIAvailable ? "✓" : "🔒"}
+                    </button>
+                  </div>
+                  {!isCrawl4AIAvailable && (
+                    <span className="text-xs text-slate-500">
+                      (Start API server: python scraper/api_server.py)
+                    </span>
+                  )}
+                </div>
 
                 {/* Quick stats */}
                 <div className="flex gap-6 text-sm text-slate-400">

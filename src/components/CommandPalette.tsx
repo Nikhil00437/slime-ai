@@ -18,14 +18,13 @@ import {
   Bug,
   FileText,
 } from 'lucide-react';
-import { DEFAULT_SKILLS, Skill } from '../types';
 
 interface Command {
   id: string;
   label: string;
   icon: React.ReactNode;
   shortcut?: string;
-  category: 'action' | 'navigation' | 'settings' | 'model' | 'skill';
+  category: 'action' | 'navigation' | 'settings' | 'model';
   action: () => void;
   keywords?: string[];
 }
@@ -33,11 +32,10 @@ interface Command {
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  onSkillActivate?: (skillId: string) => void;
   onOpenWebScraper?: () => void;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onSkillActivate, onOpenWebScraper }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onOpenWebScraper }) => {
   const {
     createConversation,
     setShowSettings,
@@ -52,15 +50,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
 
   // Get all available models for model switching commands
   const allModels = providers.flatMap(p => p.models);
-
-  // Skill icons mapping
-  const skillIcons: Record<string, React.ReactNode> = {
-    'code-expert': <Code size={16} />,
-    'creative-writer': <BookOpen size={16} />,
-    'research-analyst': <Brain size={16} />,
-    'teacher': <GraduationCap size={16} />,
-    'debate-partner': <Scale size={16} />,
-  };
 
   const commands: Command[] = [
     // Actions
@@ -114,20 +103,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       },
       keywords: ['rag', 'query', 'retrieve', 'search', 'ask'],
     },
-    // Skills
-    ...DEFAULT_SKILLS.map(skill => ({
-      id: `skill-${skill.id}`,
-      label: `Activate ${skill.name}`,
-      icon: skillIcons[skill.id] || <Zap size={16} />,
-      category: 'skill' as const,
-      action: () => {
-        if (onSkillActivate) {
-          onSkillActivate(skill.id);
-        }
-        onClose();
-      },
-      keywords: [skill.name.toLowerCase(), skill.id, ...(skill.keywords || [])],
-    })),
     // Models - will be dynamically added
     ...allModels.map(model => ({
       id: `model-${model.id}`,
@@ -203,10 +178,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     }
   }, [filteredCommands, selectedIndex, onClose]);
 
-  // Global keyboard shortcut to open palette
+  // Global keyboard shortcut to open palette (Ctrl+K or ⌘K on Mac)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         // Toggle handled by parent
       }
@@ -223,7 +198,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     navigation: 'Navigation',
     settings: 'Settings',
     model: 'Models',
-    skill: 'Skills',
     webscraper: 'Web Scraper',
   };
 
@@ -319,13 +293,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
   );
 };
 
-// Hook to manage command palette state
+// Hook to manage command palette state (Ctrl+K or ⌘K on Mac)
 export const useCommandPalette = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setIsOpen(prev => !prev);
       }

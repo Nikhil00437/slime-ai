@@ -2,6 +2,12 @@
  * Search API - Direct fetch with CORS handling
  */
 
+const CORS_PROXIES = [
+  (url: string) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://corsproxy.org/?${encodeURIComponent(url)}`,
+];
+
 /**
  * Fetch search results via direct Google CSE
  */
@@ -23,28 +29,42 @@ export async function googleSearch(query: string, numResults = 10): Promise<any[
 }
 
 /**
- * Fetch webpage content directly
+ * Fetch webpage content with CORS proxy fallback
  */
 export async function googleFetch(url: string, maxLength = 15000): Promise<{ content: string; url: string; source: string }> {
   if (!url) return { content: '', url: '', source: '' };
 
-  try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(15000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, maxLength);
-      return { content: text, url, source: 'direct' };
+  const tryFetch = async (fetchUrl: string): Promise<{ content: string; url: string; source: string } | null> => {
+    try {
+      const res = await fetch(fetchUrl, {
+        signal: AbortSignal.timeout(15000),
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, maxLength);
+        return { content: text, url, source: fetchUrl === url ? 'direct' : 'proxy' };
+      }
+    } catch (e) {
+      console.log('[Fetch] Error:', e);
     }
-  } catch (e) {
-    console.log('[Fetch] Error:', e);
+    return null;
+  };
+
+  // Try direct first
+  const direct = await tryFetch(url);
+  if (direct) return direct;
+
+  // Try CORS proxies
+  for (const proxyFn of CORS_PROXIES) {
+    const proxyUrl = proxyFn(url);
+    const result = await tryFetch(proxyUrl);
+    if (result) return result;
   }
 
   return { content: '', url, source: '' };

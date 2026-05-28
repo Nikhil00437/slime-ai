@@ -159,7 +159,7 @@ export const MessageReactions: React.FC<MessageReactionsProps> = ({ reactions = 
   );
 };
 
-interface QuickReplyChip {
+export interface QuickReplyChip {
   id: string;
   text: string;
 }
@@ -191,7 +191,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
   if (!content) return null;
 
   return (
-    <div className="prose prose-invert max-w-none prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-code:text-orange-400 prose-code:bg-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-pre:p-0 prose-pre:m-0 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-li:my-1 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-400">
+    <div className="prose prose-invert max-w-none font-serif text-[15.5px] leading-relaxed tracking-wide prose-p:my-2.5 prose-headings:mt-4 prose-headings:mb-2 prose-code:text-orange-400 prose-code:bg-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-pre:p-0 prose-pre:m-0 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-li:my-1 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-400">
       <ReactMarkdown
         components={{
           code({ className, children, ...props }) {

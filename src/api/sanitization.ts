@@ -119,10 +119,10 @@ export function checkPromptInjection(input: string): { blocked: boolean; pattern
 }
 
 /**
- * Sanitize user input for skill prompts
- * Removes attempts to override skill behavior
+ * Sanitize user input for prompts
+ * Removes attempts to override model behavior
  */
-export function sanitizeSkillInput(input: string): string {
+export function sanitizePromptInput(input: string): string {
   let sanitized = input;
   
   // Remove common injection prefixes
@@ -185,7 +185,7 @@ export function sanitizeComplete(
     if (injection.blocked) {
       threats.push(`prompt_injection:${injection.pattern}`);
     }
-    sanitized = sanitizeSkillInput(sanitized);
+    sanitized = sanitizePromptInput(sanitized);
   }
   
   // 2. XSS check (always)

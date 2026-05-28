@@ -50,10 +50,10 @@ export const HelpPalette: React.FC<HelpPaletteProps> = ({ isOpen, onClose }) => 
     }
   }, [isOpen]);
 
-  // Keyboard shortcut handler
+  // Keyboard shortcut handler (Ctrl+H or ⌘H on Mac)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
         e.preventDefault();
       }
     };
@@ -147,13 +147,13 @@ export const HelpPalette: React.FC<HelpPaletteProps> = ({ isOpen, onClose }) => 
   );
 };
 
-// Hook to manage help palette state
+// Hook to manage help palette state (Ctrl+H or ⌘H on Mac)
 export const useHelpPalette = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
         e.preventDefault();
         setIsOpen(prev => !prev);
       }
@@ -210,18 +210,6 @@ function getHelpSections(): HelpSection[] {
       title: 'Memory System',
       icon: <Database size={16} />,
       content: <MemorySection />,
-    },
-    {
-      id: 'skills',
-      title: 'Skills System',
-      icon: <Sparkles size={16} />,
-      content: <SkillsSection />,
-    },
-    {
-      id: 'forge',
-      title: 'Personality Forge',
-      icon: <Zap size={16} />,
-      content: null,
     },
     {
       id: 'files',
@@ -284,7 +272,7 @@ function WelcomeSection() {
           </li>
           <li className="flex items-start gap-3">
             <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold shrink-0">4</span>
-            <span><strong className="text-white">Save to Vault:</strong> Connect an Obsidian vault to save your chats, memory, and skills persistently.</span>
+            <span><strong className="text-white">Save to Vault:</strong> Connect an Obsidian vault to save your chats and memory persistently.</span>
           </li>
         </ol>
       </div>
@@ -297,9 +285,9 @@ function WelcomeSection() {
           color="blue"
         />
         <FeatureCard
-          icon={<Sparkles size={20} />}
-          title="Skills System"
-          description="Use and create specialized AI skills"
+          icon={<Bug size={20} />}
+          title="Web Scraper"
+          description="Extract articles and pages dynamically into your vault"
           color="purple"
         />
         <FeatureCard
@@ -372,7 +360,7 @@ function NavigationSection() {
           title="Command Palette"
           description="Quick access to all actions via keyboard"
           tips={[
-            'Press Ctrl+K to open',
+            'Press Ctrl+K (or ⌘K on Mac) to open',
             'Search for commands, models, or settings',
             'Use arrow keys to navigate, Enter to select',
           ]}
@@ -382,9 +370,9 @@ function NavigationSection() {
           title="Settings Panel"
           description="Configure providers, API keys, and preferences"
           tips={[
-            'Press Ctrl+, to open',
+            'Press Ctrl+, (or ⌘+, on Mac) to open',
             'Manage connected providers',
-            'Configure model selectors for memory and skill generation',
+            'Configure model selectors for summarization and memory',
           ]}
         />
       </div>
@@ -395,17 +383,17 @@ function NavigationSection() {
           Pro Tip
         </h3>
         <p className="text-sm text-gray-400">
-          Use <kbd className="kbd">Ctrl+H</kbd> anytime to open this help palette and learn about any feature!
+          Use <kbd className="kbd">Ctrl+H</kbd> (or <kbd className="kbd">⌘H</kbd> on Mac) anytime to open this help palette and learn about any feature!
         </p>
       </div>
     </div>
   );
 }
 
-function NavItem({ title, description, tips }: {
+function NavItem({ title, description, tips = [] }: {
   title: string;
   description: string;
-  tips: string[];
+  tips?: string[];
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -679,7 +667,7 @@ function ChatFeaturesSection() {
       <div className="space-y-3">
         <h3 className="text-white font-semibold">Message Actions</h3>
         <div className="bg-gray-800/30 rounded-xl border border-gray-700 p-4 space-y-2 text-sm">
-          <ActionItem action="Thumb Up/Down" description="Rate responses to improve the skill system" />
+          <ActionItem action="Thumb Up/Down" description="Rate responses to save quality preferences" />
           <ActionItem action="Branch" description="Create a new conversation branch from this message" />
           <ActionItem action="Copy" description="Copy message content to clipboard" />
           <ActionItem action="Edit" description="Edit your message and regenerate the response" />
@@ -748,10 +736,6 @@ function VaultSection() {
           </li>
           <li className="flex items-center gap-2">
             <ChevronRight size={14} className="text-green-400" />
-            <strong className="text-white">Skills:</strong> Custom skills saved as .md files
-          </li>
-          <li className="flex items-center gap-2">
-            <ChevronRight size={14} className="text-green-400" />
             <strong className="text-white">Settings:</strong> API keys and preferences
           </li>
         </ul>
@@ -764,11 +748,10 @@ function VaultSection() {
           <pre className="text-gray-300 whitespace-pre-wrap">{`vault/
 ├── .env              # API keys (not synced)
 ├── chats/            # Conversation files
-├── memory/
-│   ├── perpetual/    # Long-term memory
-│   ├── periodically/ # Medium-term (30 day TTL)
-│   └── ephemerally/  # Short-term (1 day TTL)
-└── skills/           # Custom skills`}</pre>
+└── memory/
+    ├── perpetual/    # Long-term memory
+    ├── periodically/ # Medium-term (30 day TTL)
+    └── ephemerally/  # Short-term (1 day TTL)`}</pre>
         </div>
       </div>
 
@@ -777,7 +760,7 @@ function VaultSection() {
         <ol className="space-y-2 text-sm text-gray-400">
           <li className="flex items-start gap-3">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold shrink-0">1</span>
-            <span>Open Settings (Ctrl+,)</span>
+            <span>Open Settings (Ctrl+, or ⌘+, on Mac)</span>
           </li>
           <li className="flex items-start gap-3">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold shrink-0">2</span>
@@ -868,13 +851,6 @@ function MemorySection() {
               <p className="text-gray-400 text-xs mt-1">Learned from your interactions and explicit settings</p>
             </div>
           </div>
-          <div className="flex items-start gap-3">
-            <Sparkles size={14} className="text-purple-400 mt-1" />
-            <div>
-              <strong className="text-white">Skill Context</strong>
-              <p className="text-gray-400 text-xs mt-1">Active skills provide specialized knowledge</p>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -892,102 +868,6 @@ function MemorySection() {
   );
 }
 
-function SkillsSection() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
-          <Sparkles size={22} className="text-blue-400" />
-          Skills System
-        </h2>
-        <p className="text-gray-400 text-sm">Tensura-inspired skill system with ranks and levels</p>
-      </div>
-
-      <div className="bg-gradient-to-r from-purple-600/10 to-pink-600/10 border border-purple-500/20 rounded-xl p-5">
-        <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-          <Layers size={18} className="text-purple-400" />
-          Skill Ranks
-        </h3>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <RankInfo rank="Normal" probability="55%" color="text-gray-400" />
-          <RankInfo rank="Rare" probability="40%" color="text-blue-400" />
-          <RankInfo rank="Unique" probability="~5%" color="text-purple-400" />
-          <RankInfo rank="Terminal" probability="0.0000001%" color="text-red-400" />
-        </div>
-        <p className="text-xs text-gray-500 mt-3">
-          Ultimate skills cannot be generated - they require a superior model or special conditions.
-        </p>
-      </div>
-
-      <div className="space-y-3">
-        <h3 className="text-white font-semibold">Level System</h3>
-        <div className="bg-gray-800/30 rounded-xl border border-gray-700 p-4">
-          <p className="text-sm text-gray-400 mb-3">Level up by getting thumbs up on your skill responses:</p>
-          <div className="space-y-2 text-xs">
-            <LevelRow level={1} threshold={0} />
-            <LevelRow level={2} threshold={20} />
-            <LevelRow level={3} threshold={50} />
-            <LevelRow level={4} threshold={100} />
-            <LevelRow level={5} threshold={200} />
-            <LevelRow level={6} threshold={500} />
-            <LevelRow level={7} threshold={1000} />
-            <LevelRow level={8} threshold={2000} />
-            <LevelRow level={9} threshold={5000} />
-            <LevelRow level={10} threshold={10000} />
-            <p className="text-gray-500 mt-2">Beyond level 10: exponential growth (1.5x per level)</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-        <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
-          <Sparkles size={16} className="text-purple-400" />
-          Gluttony Skill
-        </h3>
-        <p className="text-sm text-gray-400">
-          The default unique skill that can merge compatible skills (95%+ compatibility).
-          Use it to combine multiple skills into a more powerful version.
-        </p>
-      </div>
-
-      <div className="bg-blue-600/10 border border-blue-500/20 rounded-xl p-4">
-        <h3 className="text-white font-semibold mb-2">Skill Compatibility</h3>
-        <p className="text-sm text-gray-400">
-          Each skill has compatibility rules based on model capabilities. Some models may not
-          support certain features. The UI shows warnings when you select an incompatible model.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function RankInfo({ rank, probability, color }: { rank: string; probability: string; color: string }) {
-  return (
-    <div className="flex items-center justify-between bg-gray-800/50 rounded-lg px-3 py-2">
-      <span className={`font-medium ${color}`}>{rank}</span>
-      <span className="text-gray-500">{probability}</span>
-    </div>
-  );
-}
-
-function LevelRow({ level, threshold }: { level: number; threshold: number }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-white font-medium">Level {level}</span>
-      <span className="text-gray-500">{threshold}+ thumbs</span>
-    </div>
-  );
-}
-
-function SkillForgeSection() {
-  return (
-    <div className="space-y-6">
-      <p className="text-gray-400 text-sm">
-        Personality Forge has been removed. Use the Personality Selector in the Chat view to select AI personalities.
-      </p>
-    </div>
-  );
-}
 
 function FileAttachmentsSection() {
   return (

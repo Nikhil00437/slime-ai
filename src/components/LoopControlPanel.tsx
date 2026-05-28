@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../store/AppContext';
-import { LoopConfig, LoopState, LoopHistoryEntry } from '../types';
+import { LoopConfig, LoopState, LoopHistoryEntry, DEFAULT_LOOP_CONFIG } from '../types';
 import {
   Play,
   Pause,

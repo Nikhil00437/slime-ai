@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { Sparkles, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { PERSONALITY_PRESETS, Skill } from '../types';
+import { PERSONALITY_PRESETS, Personality } from '../types';
 
 interface PersonalitySelectorProps {
   activePersonalityId: string | null;
@@ -32,7 +32,7 @@ export const PersonalitySelector: React.FC<PersonalitySelectorProps> = ({
     }
   };
 
-  const handlePersonalityClick = (personality: Skill) => {
+  const handlePersonalityClick = (personality: Personality) => {
     if (activePersonalityId === personality.id) {
       onPersonalitySelect(null);
     } else {
@@ -135,7 +135,7 @@ export const PersonalitySelector: React.FC<PersonalitySelectorProps> = ({
 /**
  * Get personality by ID
  */
-export function getPersonalityById(id: string): Skill | undefined {
+export function getPersonalityById(id: string): Personality | undefined {
   return PERSONALITY_PRESETS.find(p => p.id === id);
 }
 

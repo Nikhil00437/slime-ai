@@ -1,7 +1,83 @@
-import { ChatMessage, Conversation, ProviderType } from '../types';
-import { MemoryEntry, MemoryCategory } from '../slime/types';
-import { saveMemoryEntry, getLastMemoryTimestamp, loadMemory } from './skillStorage';
+import { ChatMessage, Conversation, ProviderType, MemoryEntry, MemoryCategory } from '../types';
 import { nonStreamChatCompletion } from './providers';
+import { safeGetItem, safeSetItem } from '../utils/safeStorage';
+
+const MEMORY_DB_NAME = 'Slime-memory';
+const MEMORY_STORE = 'memory';
+const DB_VERSION = 1;
+
+let memoryDB: IDBDatabase | null = null;
+
+async function openMemoryDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (memoryDB) resolve(memoryDB);
+    const request = indexedDB.open(MEMORY_DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      memoryDB = request.result;
+      resolve(memoryDB);
+    };
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(MEMORY_STORE)) {
+        db.createObjectStore(MEMORY_STORE, { keyPath: 'id' });
+      }
+    };
+  });
+}
+
+export async function loadMemory(category?: MemoryCategory): Promise<MemoryEntry[]> {
+  try {
+    const db = await openMemoryDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(MEMORY_STORE, 'readonly');
+      const store = tx.objectStore(MEMORY_STORE);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        let entries = request.result as MemoryEntry[];
+        if (category) {
+          entries = entries.filter(e => e.category === category);
+        }
+        resolve(entries.sort((a, b) => b.createdAt - a.createdAt));
+      };
+      request.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function saveMemoryEntry(entry: MemoryEntry): Promise<void> {
+  const db = await openMemoryDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEMORY_STORE, 'readwrite');
+    const store = tx.objectStore(MEMORY_STORE);
+    const request = store.put(entry);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function deleteMemoryEntry(entryId: string): Promise<void> {
+  const db = await openMemoryDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEMORY_STORE, 'readwrite');
+    const store = tx.objectStore(MEMORY_STORE);
+    const request = store.delete(entryId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function getLastMemoryTimestamp(): Promise<number> {
+  try {
+    const entries = await loadMemory();
+    if (entries.length === 0) return 0;
+    return Math.max(...entries.map(e => e.createdAt));
+  } catch {
+    return 0;
+  }
+}
 
 let memoryIntervalId: number | null = null;
 let isProcessingMemory = false;
@@ -163,15 +239,12 @@ const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
 };
 
 export function loadMemorySettings(): MemorySettings {
-  try {
-    const stored = localStorage.getItem('Slimeemory_settings');
-    if (stored) return { ...DEFAULT_MEMORY_SETTINGS, ...JSON.parse(stored) };
-  } catch {}
-  return DEFAULT_MEMORY_SETTINGS;
+  const stored = safeGetItem<MemorySettings>('Slime_memory_settings');
+  return stored ?? DEFAULT_MEMORY_SETTINGS;
 }
 
 export function saveMemorySettings(settings: MemorySettings): void {
-  localStorage.setItem('Slime_memory_settings', JSON.stringify(settings));
+  safeSetItem('Slime_memory_settings', settings);
 }
 
 export function startMemoryProcessor(

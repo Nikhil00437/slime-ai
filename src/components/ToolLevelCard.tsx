@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { ToolLevel, getToolNextLevelThreshold, TOOL_RANK_META, ToolRank } from '../../types';
+import { ToolLevel, getToolNextLevelThreshold, TOOL_RANK_META, ToolRank } from '../types';
 import { ThumbsUp, ThumbsDown, TrendingUp, Clock } from 'lucide-react';
 
 interface ToolLevelCardProps {

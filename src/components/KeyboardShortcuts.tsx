@@ -20,16 +20,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['↓'], description: 'Next input in history', category: 'Input' },
   { keys: ['Escape'], description: 'Close dropdowns/cancel', category: 'Input' },
 
-  // Skills
-  { keys: ['Ctrl', '1'], description: 'Activate Code Expert', category: 'Skills' },
-  { keys: ['Ctrl', '2'], description: 'Activate Creative Writer', category: 'Skills' },
-  { keys: ['Ctrl', '3'], description: 'Activate Research Analyst', category: 'Skills' },
-  { keys: ['Ctrl', '4'], description: 'Activate Teacher', category: 'Skills' },
-  { keys: ['Ctrl', '5'], description: 'Activate Debate Partner', category: 'Skills' },
-  { keys: ['Ctrl', '0'], description: 'Deactivate skill', category: 'Skills' },
-
   // Messages
-  { keys: ['@'], description: 'Insert skill reference', category: 'Messages' },
   { keys: ['/'], description: 'Insert command', category: 'Messages' },
   { keys: ['$'], description: 'Insert variable', category: 'Messages' },
 ];
@@ -47,10 +38,6 @@ export function KeyboardShortcuts({ compact = false }: KeyboardShortcutsProps) {
         <span className="flex items-center gap-1">
           <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">K</kbd>
           <span>Commands</span>
-        </span>
-        <span className="flex items-center gap-1">
-          <kbd className="kbd">Ctrl</kbd>+<kbd className="kbd">1-5</kbd>
-          <span>Skills</span>
         </span>
       </div>
     );

@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppContext } from '../store/AppContext';
 import { SettingsPanel } from './SettingsPanel';
-import { Plus, MessageSquare, Trash2, ChevronDown, ChevronUp, Settings, Cpu, Bot, Globe, Search, Pin, Star, MoreVertical, Copy, GitBranch, Pencil, Download, } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, ChevronDown, ChevronUp, Settings, Cpu, Bot, Globe, Search, Pin, Star, MoreVertical, Copy, GitBranch, Pencil, Download, User } from 'lucide-react';
 import logoUrl from '../assets/logo.jpg';
 
 // Error Boundary Component
@@ -66,13 +67,37 @@ export const Sidebar: React.FC = () => {
     exportAllData,
   } = useAppContext();
 
+  // Compute active provider name for user profile
+  const activeProviderName = activeModel?.provider 
+    ? providers.find(p => p.id === activeModel.provider)?.name || activeModel.provider
+    : 'No model selected';
+
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(
     () => new Set(providers.map((p) => p.id))
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [showConvMenuId, setShowConvMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; renderUpward: boolean } | null>(null);
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+
+  const closeMenu = () => {
+    setShowConvMenuId(null);
+    setMenuPosition(null);
+  };
+
+  React.useEffect(() => {
+    if (!showConvMenuId) return;
+    const handleClose = () => {
+      closeMenu();
+    };
+    window.addEventListener('scroll', handleClose, true);
+    window.addEventListener('resize', handleClose);
+    return () => {
+      window.removeEventListener('scroll', handleClose, true);
+      window.removeEventListener('resize', handleClose);
+    };
+  }, [showConvMenuId]);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [swipedConvId] = useState<string | null>(null);
@@ -157,7 +182,7 @@ export const Sidebar: React.FC = () => {
       )}
 
       <div
-        className={`fixed lg:relative inset-y-0 left-0 z-40 flex flex-col glass border-r border-slime-500/10 transition-all duration-300 ${isSidebarOpen ? 'w-80' : 'w-0 lg:w-16'
+        className={`fixed lg:relative lg:h-full inset-y-0 left-0 z-40 flex flex-col glass border-r border-slime-500/10 transition-all duration-300 ${isSidebarOpen ? 'w-72' : 'w-0 lg:w-16'
           } overflow-hidden`}
       >
         {!isSidebarOpen ? (
@@ -178,7 +203,10 @@ export const Sidebar: React.FC = () => {
               <Plus size={20} />
             </button>
             <button
-              onClick={() => setShowSettings(true)}
+              onClick={() => {
+                setIsSidebarOpen(true);
+                setShowSettings(true);
+              }}
               className="p-3 mt-2 text-dark-500 hover:text-dark-100 hover:bg-dark-700/40 rounded-lg sidebar-icon-btn"
               title="Settings"
             >
@@ -186,7 +214,7 @@ export const Sidebar: React.FC = () => {
             </button>
           </div>
         ) : (
-          <div className="flex flex-col h-full min-w-[320px]">
+          <div className="flex flex-col h-full min-w-[288px]">
             {/* Header */}
             <div className="p-4 border-b border-dark-700/30">
               <div className="flex items-center justify-between mb-3">
@@ -249,7 +277,7 @@ export const Sidebar: React.FC = () => {
                 </div>
 
                 {/* Model List */}
-                <div className="flex-1 overflow-y-auto px-2 py-2 sidebar-scroll">
+                <div className="max-h-[280px] overflow-y-auto px-2 py-2 sidebar-scroll min-h-0 shrink-0">
                   {searchQuery ? (
                     /* Search results (flat) */
                     <div>
@@ -338,7 +366,7 @@ export const Sidebar: React.FC = () => {
                               <button
                                 key={model.id}
                                 onClick={() => setActiveModel(model)}
-                                className={`w-full text-left px-3 py-2 ml-4 rounded-md text-sm truncate flex items-center gap-2 model-item ${activeModel?.id === model.id
+                                className={`w-full text-left pl-7 pr-3 py-2 rounded-md text-sm truncate flex items-center gap-2 model-item ${activeModel?.id === model.id
                                     ? 'bg-slime-500/12 text-slime-300 border border-slime-500/30 selected'
                                     : 'text-dark-300 hover:bg-dark-700/40'
                                   }`}
@@ -355,7 +383,7 @@ export const Sidebar: React.FC = () => {
                 </div>
 
                 {/* Conversations List */}
-                <div className="border-t border-dark-700/30">
+                <div className="border-t border-dark-700/30 flex-1 min-h-0 flex flex-col">
                   <div className="flex items-center justify-between px-3 py-2 provider-section">
                     <button
                       onClick={() => toggleSection('conversations')}
@@ -407,13 +435,13 @@ export const Sidebar: React.FC = () => {
                   </div>
 
                   {!collapsedSections.has('conversations') && (
-                    <div className="flex-1 overflow-y-auto max-h-60 pb-2 sidebar-scroll">
+                    <div className="flex-1 overflow-y-auto pb-2 sidebar-scroll min-h-0">
                       {sortedConversations.length === 0 ? (
                         <p className="text-sm text-dark-600 px-3 py-4 text-center">
                           No conversations yet
                         </p>
                       ) : (
-                        sortedConversations.slice(0, 20).map((conv) => {
+                        sortedConversations.slice(0, 20).map((conv, index) => {
                           // Get last message preview
                           const lastMessage = conv.messages[conv.messages.length - 1];
                           const lastMessagePreview = lastMessage?.content
@@ -485,95 +513,59 @@ export const Sidebar: React.FC = () => {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setShowConvMenuId(showConvMenuId === conv.id ? null : conv.id);
+                                    if (showConvMenuId === conv.id) {
+                                      closeMenu();
+                                    } else {
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      const spaceBelow = window.innerHeight - rect.bottom;
+                                      const renderUpward = spaceBelow < 220; // 220px threshold for menu height
+                                      setShowConvMenuId(conv.id);
+                                      setMenuPosition({
+                                        top: renderUpward ? rect.top - 4 : rect.bottom + 4,
+                                        left: rect.right,
+                                        renderUpward,
+                                      });
+                                    }
                                   }}
                                   className="p-1 text-dark-500 hover:text-dark-100 conv-menu-btn btn-press"
                                 >
                                   <MoreVertical size={12} />
                                 </button>
-
-                                {showConvMenuId === conv.id && (
-                                  <>
-                                    <div className="fixed inset-0 z-40" onClick={() => setShowConvMenuId(null)} />
-                                    <div className="absolute right-0 top-full mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-lg shadow-xl min-w-32 dropdown-animate">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          duplicateConversation(conv.id);
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 rounded-t-lg"
-                                      >
-                                        <Copy size={12} /> Duplicate
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setEditingConvId(conv.id);
-                                          setEditingTitle(conv.title);
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
-                                      >
-                                        <Pencil size={12} /> Rename
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          togglePinConversation(conv.id);
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
-                                      >
-                                        <Pin size={12} /> {conv.isPinned ? 'Unpin' : 'Pin'}
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          branchConversation(conv.messages[0]?.id || conv.id);
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
-                                      >
-                                        <GitBranch size={12} /> Branch
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          exportConversation(conv.id, 'markdown');
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40"
-                                      >
-                                        <Download size={12} /> Export
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          deleteConversation(conv.id);
-                                          setShowConvMenuId(null);
-                                        }}
-                                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20 rounded-b-lg"
-                                      >
-                                        <Trash2 size={12} /> Delete
-                                      </button>
-                                    </div>
-                                  </>
-                                )}
                               </div>
                             </div>
-                          );
-                        })
-                      )}
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                {/* User Profile */}
+                <div className="border-t border-dark-700/30 px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-slime-500/20 flex items-center justify-center shrink-0">
+                      <User size={16} className="text-slime-400" />
                     </div>
-                  )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-dark-100 truncate">Guest</p>
+                      <p className="text-xs text-dark-500 truncate">{activeProviderName || 'No model selected'}</p>
+                    </div>
+                    <button
+                      onClick={() => setShowSettings(true)}
+                      className="p-1.5 text-dark-500 hover:text-dark-100 rounded-lg hover:bg-dark-700/40 transition-colors sidebar-profile-btn"
+                      title="Settings"
+                    >
+                      <Settings size={14} />
+                    </button>
+                  </div>
                 </div>
-              </>
-            )}
+
+                </>
+              )}
           </div>
         )}
 
-        {/* Inline editing for conversation title */}
+        {/* edit */}
         {editingConvId && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-xl p-4 w-72">
@@ -615,6 +607,98 @@ export const Sidebar: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Conversation menu dropdown Portal */}
+      {showConvMenuId && menuPosition && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={(e) => {
+            e.stopPropagation();
+            closeMenu();
+          }} />
+          <div
+            className="fixed z-50 pointer-events-auto"
+            style={{
+              top: `${menuPosition.top}px`,
+              left: `${menuPosition.left}px`,
+              transform: menuPosition.renderUpward ? 'translate(-100%, -100%)' : 'translate(-100%, 0)',
+            }}
+          >
+            <div 
+              className="bg-dark-800/95 backdrop-blur-xl border border-dark-700/40 rounded-lg shadow-xl min-w-32 dropdown-animate flex flex-col py-1"
+              style={{ transformOrigin: menuPosition.renderUpward ? 'bottom right' : 'top right' }}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  duplicateConversation(showConvMenuId);
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 text-left"
+              >
+                <Copy size={12} /> Duplicate
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const conv = conversations.find(c => c.id === showConvMenuId);
+                  if (conv) {
+                    setEditingConvId(showConvMenuId);
+                    setEditingTitle(conv.title);
+                  }
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 text-left"
+              >
+                <Pencil size={12} /> Rename
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePinConversation(showConvMenuId);
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 text-left"
+              >
+                <Pin size={12} /> {conversations.find(c => c.id === showConvMenuId)?.isPinned ? 'Unpin' : 'Pin'}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const conv = conversations.find(c => c.id === showConvMenuId);
+                  if (conv) {
+                    branchConversation(conv.messages[0]?.id || conv.id);
+                  }
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 text-left"
+              >
+                <GitBranch size={12} /> Branch
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  exportConversation(showConvMenuId, 'markdown');
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 text-left"
+              >
+                <Download size={12} /> Export
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteConversation(showConvMenuId);
+                  closeMenu();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20 text-left"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </>
   );
 };

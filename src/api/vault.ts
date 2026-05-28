@@ -1,4 +1,32 @@
-import { Conversation, ChatMessage } from '../types';
+import { Conversation, ChatMessage, ProviderType, SidebarBlockType } from '../types';
+import {
+  getBrowserInfo,
+  getBrowserCapabilities,
+  requiresFallbackMode,
+  supportsFullVault,
+  BrowserType
+} from './browserDetection';
+import {
+  IndexedDBVault,
+  initIndexedDBVault,
+  getIndexedDBVault,
+  StorageInfo
+} from './vaultFallback';
+import { isFileSystemDirectoryHandle } from '../utils/fileSystem';
+
+// Frontmatter parsing interfaces
+interface ChatFrontmatter {
+  id?: string;
+  title?: string;
+  model?: string;
+  models?: string[];
+  provider?: ProviderType;
+  createdAt?: number;
+  updatedAt?: number;
+  memoryEnabled?: boolean;
+  agentSteps?: unknown[];
+  sidebarData?: unknown;
+}
 
 const CHATS_FOLDER = 'chats';
 const MEMORY_FOLDER = 'memory';
@@ -7,6 +35,111 @@ const DATA_FOLDER = 'data';
 const DB_NAME = 'Slime-vault';
 const DB_VERSION = 1;
 const HANDLE_STORE = 'handles';
+
+// Vault storage type
+export type VaultStorageType = 'file-system-access' | 'indexeddb' | 'none';
+
+// Vault state
+export interface VaultState {
+  storageType: VaultStorageType;
+  isConnected: boolean;
+  folderName: string | null;
+  browser: BrowserType;
+  supportsFSA: boolean;
+  isFallbackMode: boolean;
+  storageInfo?: StorageInfo;
+}
+
+let currentVaultState: VaultState = {
+  storageType: 'none',
+  isConnected: false,
+  folderName: null,
+  browser: 'unknown',
+  supportsFSA: false,
+  isFallbackMode: false,
+};
+
+// IndexedDB fallback instance
+let indexedDBVault: IndexedDBVault | null = null;
+
+/**
+ * Get the current vault state
+ */
+export function getVaultState(): VaultState {
+  return currentVaultState;
+}
+
+/**
+ * Initialize vault based on browser capabilities
+ */
+export async function initVault(): Promise<VaultState> {
+  const browserInfo = getBrowserInfo();
+  const capabilities = getBrowserCapabilities();
+  const isFallback = requiresFallbackMode();
+
+  currentVaultState = {
+    storageType: capabilities.supportsFileSystemAccess ? 'file-system-access' : (isFallback ? 'indexeddb' : 'none'),
+    isConnected: false,
+    folderName: null,
+    browser: browserInfo.browser,
+    supportsFSA: capabilities.supportsFileSystemAccess,
+    isFallbackMode: isFallback,
+  };
+
+  // Try to restore existing handle for FSA mode
+  if (capabilities.supportsFileSystemAccess) {
+    const handle = await restoreVaultHandle();
+    if (handle) {
+      currentVaultState.isConnected = true;
+      currentVaultState.folderName = handle.name;
+    }
+  } else if (isFallback) {
+    // Initialize IndexedDB fallback
+    try {
+      indexedDBVault = await initIndexedDBVault();
+      const storageInfo = await indexedDBVault.getStorageInfo();
+      currentVaultState.isConnected = true;
+      currentVaultState.storageInfo = storageInfo;
+      console.log('[Vault] IndexedDB fallback initialized');
+    } catch (err) {
+      console.error('[Vault] Failed to initialize IndexedDB fallback:', err);
+    }
+  }
+
+  console.log('[Vault] Initialized:', currentVaultState);
+  return currentVaultState;
+}
+
+/**
+ * Check if vault is using fallback mode
+ */
+export function isVaultFallbackMode(): boolean {
+  return currentVaultState.isFallbackMode;
+}
+
+/**
+ * Check if vault supports File System Access
+ */
+export function vaultSupportsFSA(): boolean {
+  return currentVaultState.supportsFSA;
+}
+
+/**
+ * Get the current browser info for vault
+ */
+export function getVaultBrowserInfo() {
+  return getBrowserInfo();
+}
+
+/**
+ * Get storage info (for fallback mode)
+ */
+export async function getVaultStorageInfo(): Promise<StorageInfo | null> {
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    return await indexedDBVault.getStorageInfo();
+  }
+  return null;
+}
 
 export interface FileSystemAPI {
   showDirectoryPicker: (options?: {
@@ -75,9 +208,30 @@ async function loadHandle(): Promise<FileSystemDirectoryHandle | null> {
 }
 
 export async function selectVaultFolder(): Promise<string | null> {
+  // Handle fallback mode (Firefox, Safari, etc.)
   if (!hasFileSystemAccess()) {
-    console.warn('File System Access API not supported');
-    return null;
+    console.warn('[Vault] File System Access API not supported, using fallback mode');
+    
+    // Initialize IndexedDB fallback if not already done
+    if (!indexedDBVault) {
+      try {
+        indexedDBVault = await initIndexedDBVault();
+        const storageInfo = await indexedDBVault.getStorageInfo();
+        
+        currentVaultState.isConnected = true;
+        currentVaultState.storageInfo = storageInfo;
+        currentVaultState.storageType = 'indexeddb';
+        currentVaultState.isFallbackMode = true;
+        
+        console.log('[Vault] Fallback mode initialized with IndexedDB');
+        return 'IndexedDB Storage (Fallback)';
+      } catch (err) {
+        console.error('[Vault] Failed to initialize fallback:', err);
+        return null;
+      }
+    }
+    
+    return 'IndexedDB Storage (Fallback)';
   }
 
   try {
@@ -90,12 +244,43 @@ export async function selectVaultFolder(): Promise<string | null> {
     await ensureFoldersExist(handle);
     await saveHandle(handle);
 
+    // Update vault state
+    currentVaultState.isConnected = true;
+    currentVaultState.folderName = handle.name;
+    currentVaultState.storageType = 'file-system-access';
+
     return handle.name;
   } catch (err) {
     if ((err as Error).name !== 'AbortError') {
       console.error('Failed to select vault folder:', err);
     }
     return null;
+  }
+}
+
+/**
+ * Query permission on a handle (handles non-standard API)
+ */
+async function queryPermissionOnHandle(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  try {
+    // @ts-expect-error - queryPermission not in standard types but exists in browsers
+    const permission = await handle.queryPermission({ mode: 'readwrite' });
+    return permission === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Request permission on a handle (handles non-standard API)
+ */
+async function requestPermissionOnHandle(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  try {
+    // @ts-expect-error - requestPermission not in standard types but exists in browsers
+    const permission = await handle.requestPermission({ mode: 'readwrite' });
+    return permission === 'granted';
+  } catch {
+    return false;
   }
 }
 
@@ -106,14 +291,12 @@ export async function restoreVaultHandle(): Promise<FileSystemDirectoryHandle | 
     const handle = await loadHandle();
     if (!handle) return null;
 
-    const permission = await (handle as any).queryPermission({ mode: 'readwrite' });
-    if (permission === 'granted') {
+    if (await queryPermissionOnHandle(handle)) {
       vaultHandle = handle;
       return handle;
     }
 
-    const requestPermission = await (handle as any).requestPermission({ mode: 'readwrite' });
-    if (requestPermission === 'granted') {
+    if (await requestPermissionOnHandle(handle)) {
       vaultHandle = handle;
       return handle;
     }
@@ -126,13 +309,7 @@ export async function restoreVaultHandle(): Promise<FileSystemDirectoryHandle | 
 
 export async function requestVaultPermission(): Promise<boolean> {
   if (!vaultHandle) return false;
-
-  try {
-    const permission = await (vaultHandle as any).requestPermission({ mode: 'readwrite' });
-    return permission === 'granted';
-  } catch {
-    return false;
-  }
+  return requestPermissionOnHandle(vaultHandle);
 }
 
 async function ensureFoldersExist(handle: FileSystemDirectoryHandle): Promise<void> {
@@ -213,7 +390,13 @@ function conversationToMarkdown(conv: Conversation): string {
   ];
 
   for (const msg of conv.messages) {
-    const role = msg.role === 'user' ? 'User' : 'Assistant';
+    const role = msg.role === 'user' 
+      ? 'User' 
+      : msg.role === 'tool' 
+        ? 'Tool' 
+        : msg.model 
+          ? `Assistant: ${msg.model}` 
+          : 'Assistant';
     const time = formatTimestamp(msg.timestamp);
     lines.push(`## ${role} (${time})`);
     lines.push('');
@@ -256,7 +439,7 @@ function markdownToConversation(
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
     if (!frontmatterMatch) return null;
 
-    const frontmatter: Record<string, string | number | string[]> = {};
+    const frontmatter: ChatFrontmatter = {};
     const fmLines = frontmatterMatch[1].split('\n');
     for (const line of fmLines) {
       const colonIdx = line.indexOf(':');
@@ -269,17 +452,17 @@ function markdownToConversation(
       } else if (value.startsWith('[')) {
         // Handle JSON array for models field
         try {
-          frontmatter[key] = JSON.parse(value);
+          (frontmatter as Record<string, unknown>)[key] = JSON.parse(value);
           continue;
         } catch {
           // Not valid JSON, treat as string
         }
       } else if (!isNaN(Number(value))) {
-        frontmatter[key] = Number(value);
+        (frontmatter as Record<string, unknown>)[key] = Number(value);
         continue;
       }
 
-      frontmatter[key] = value;
+      (frontmatter as Record<string, unknown>)[key] = value;
     }
 
     const body = content.slice(frontmatterMatch[0].length);
@@ -290,20 +473,33 @@ function markdownToConversation(
     let modelIndex = 0;
     
     for (const section of sections) {
-      // Match User, Assistant, or Tool roles
-      const match = section.match(/^(User|Assistant|Tool)\s*\(([^)]+)\)\n([\s\S]*)$/);
+      // Match User, Tool, Assistant: Model, or Assistant roles
+      const match = section.match(/^(User|Tool|Assistant:\s*(.+?)|Assistant)\s*\(([^)]+)\)\n([\s\S]*)$/);
       if (match) {
-        const role = match[1].toLowerCase() as 'user' | 'assistant' | 'tool';
+        const headerRole = match[1];
+        let role: 'user' | 'assistant' | 'tool';
+        let parsedModel = '';
+
+        if (headerRole.toLowerCase() === 'user') {
+          role = 'user';
+        } else if (headerRole.toLowerCase() === 'tool') {
+          role = 'tool';
+        } else {
+          role = 'assistant';
+          if (match[2]) {
+            parsedModel = match[2].trim();
+          }
+        }
 
         // If assistant message and we have a models array, use the next model
         // Otherwise use the default model
-        let messageModel = String(frontmatter.model || '');
-        if (role === 'assistant' && modelArray.length > 0 && modelIndex < modelArray.length) {
+        let messageModel = parsedModel || String(frontmatter.model || '');
+        if (role === 'assistant' && !parsedModel && modelArray.length > 0 && modelIndex < modelArray.length) {
           messageModel = modelArray[modelIndex] || messageModel;
           modelIndex = (modelIndex + 1) % modelArray.length; // Cycle through models
         }
 
-        const sectionContent = match[3].trim();
+        const sectionContent = match[4].trim();
 
         // Extract sidebar data if present
         let assistantSidebar: any;
@@ -359,8 +555,8 @@ function markdownToConversation(
           role,
           content: cleanContent,
           model: messageModel,
-          provider: (frontmatter.provider as any) || 'ollama',
-          timestamp: new Date(match[2]).getTime(),
+          provider: frontmatter.provider || 'ollama',
+          timestamp: new Date(match[3]).getTime(),
           toolCalls,
           toolCallId,
         });
@@ -371,14 +567,14 @@ function markdownToConversation(
       id: String(frontmatter.id || fileName.replace('.md', '')),
       title: String(frontmatter.title || 'Untitled'),
       messages,
-      createdAt: Number(frontmatter.createdAt) || Date.now(),
-      updatedAt: Number(frontmatter.updatedAt) || Date.now(),
+      createdAt: frontmatter.createdAt || Date.now(),
+      updatedAt: frontmatter.updatedAt || Date.now(),
       modelId: String(frontmatter.model || ''),
-      provider: (frontmatter.provider as any) || 'ollama',
-      modelIds: Array.isArray(frontmatter.models) ? frontmatter.models : undefined,
+      provider: frontmatter.provider || 'ollama',
+      modelIds: frontmatter.models,
       memoryEnabled: String(frontmatter.memoryEnabled) === 'true',
-      agentSteps: Array.isArray(frontmatter.agentSteps) ? (frontmatter.agentSteps as any[]) : undefined,
-      sidebarData: frontmatter.sidebarData,
+      agentSteps: Array.isArray(frontmatter.agentSteps) ? frontmatter.agentSteps as Conversation['agentSteps'] : undefined,
+      sidebarData: frontmatter.sidebarData as Conversation['sidebarData'],
     };
   } catch {
     return null;
@@ -386,6 +582,26 @@ function markdownToConversation(
 }
 
 export async function saveConversationToVault(conv: Conversation): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${CHATS_FOLDER}/${formatDate(conv.createdAt)}-${conv.id}.md`;
+      const content = conversationToMarkdown(conv);
+      const encoder = new TextEncoder();
+      await indexedDBVault.saveFile(fileName, encoder.encode(content).buffer);
+      
+      // Update storage info
+      const storageInfo = await indexedDBVault.getStorageInfo();
+      currentVaultState.storageInfo = storageInfo;
+      
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to save conversation to fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -404,6 +620,38 @@ export async function saveConversationToVault(conv: Conversation): Promise<boole
 }
 
 export async function loadConversationsFromVault(): Promise<Conversation[]> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const files = await indexedDBVault.listFiles(`${CHATS_FOLDER}/`);
+      const conversations: Conversation[] = [];
+
+      for (const filePath of files) {
+        if (filePath.endsWith('.md')) {
+          try {
+            const content = await indexedDBVault.readFile(filePath);
+            if (content) {
+              const decoder = new TextDecoder();
+              const text = decoder.decode(content);
+              const conv = markdownToConversation(text, filePath);
+              if (conv && conv.messages.length > 0) {
+                conversations.push(conv);
+              }
+            }
+          } catch (e) {
+            console.warn(`[Vault] Failed to read file: ${filePath}`, e);
+          }
+        }
+      }
+
+      return conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch (err) {
+      console.error('[Vault] Failed to load conversations from fallback:', err);
+      return [];
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return [];
 
@@ -434,6 +682,24 @@ export async function loadConversationsFromVault(): Promise<Conversation[]> {
 }
 
 export async function deleteConversationFromVault(conv: Conversation): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${CHATS_FOLDER}/${formatDate(conv.createdAt)}-${conv.id}.md`;
+      await indexedDBVault.deleteFile(fileName);
+      
+      // Update storage info
+      const storageInfo = await indexedDBVault.getStorageInfo();
+      currentVaultState.storageInfo = storageInfo;
+      
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to delete conversation from fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -462,6 +728,20 @@ export interface UserMemory {
 }
 
 export async function saveModelMemory(memory: ModelMemory): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${MEMORY_FOLDER}/${memory.provider}-${memory.modelId.replace(/[^a-zA-Z0-9]/g, '-')}.json`;
+      const encoder = new TextEncoder();
+      await indexedDBVault.saveFile(fileName, encoder.encode(JSON.stringify(memory, null, 2)).buffer);
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to save model memory to fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -479,6 +759,36 @@ export async function saveModelMemory(memory: ModelMemory): Promise<boolean> {
 }
 
 export async function loadModelMemories(): Promise<ModelMemory[]> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const files = await indexedDBVault.listFiles(`${MEMORY_FOLDER}/`);
+      const memories: ModelMemory[] = [];
+
+      for (const filePath of files) {
+        if (filePath.endsWith('.json') && !filePath.includes('user-memory')) {
+          try {
+            const content = await indexedDBVault.readFile(filePath);
+            if (content) {
+              const decoder = new TextDecoder();
+              const memory = JSON.parse(decoder.decode(content)) as ModelMemory;
+              if (memory.modelId && memory.context) {
+                memories.push(memory);
+              }
+            }
+          } catch {
+            // skip invalid files
+          }
+        }
+      }
+
+      return memories;
+    } catch {
+      return [];
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return [];
 
@@ -508,6 +818,20 @@ export async function loadModelMemories(): Promise<ModelMemory[]> {
 }
 
 export async function saveUserMemory(memory: UserMemory): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${MEMORY_FOLDER}/user-memory.json`;
+      const encoder = new TextEncoder();
+      await indexedDBVault.saveFile(fileName, encoder.encode(JSON.stringify(memory, null, 2)).buffer);
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to save user memory to fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -524,6 +848,22 @@ export async function saveUserMemory(memory: UserMemory): Promise<boolean> {
 }
 
 export async function loadUserMemory(): Promise<UserMemory | null> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${MEMORY_FOLDER}/user-memory.json`;
+      const content = await indexedDBVault.readFile(fileName);
+      if (content) {
+        const decoder = new TextDecoder();
+        return JSON.parse(decoder.decode(content)) as UserMemory;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return null;
 
@@ -554,6 +894,60 @@ export interface VaultEnv {
 }
 
 export async function saveEnvToVault(env: VaultEnv): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      // First load existing .env content
+      let existingEnv: VaultEnv = {};
+      try {
+        const content = await indexedDBVault.readFile('.env');
+        if (content) {
+          const decoder = new TextDecoder();
+          const text = decoder.decode(content);
+          const lines = text.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const eqIndex = trimmed.indexOf('=');
+            if (eqIndex > 0) {
+              const key = trimmed.slice(0, eqIndex).trim();
+              const value = trimmed.slice(eqIndex + 1).trim();
+              if (key && value) {
+                existingEnv[key as keyof VaultEnv] = value;
+              }
+            }
+          }
+        }
+      } catch {
+        // .env doesn't exist yet, that's fine
+      }
+
+      // Merge new values with existing
+      const mergedEnv: VaultEnv = { ...existingEnv, ...env };
+
+      // Write merged content
+      const lines: string[] = [
+        '# SlimeAI Environment Variables',
+        '# Do not commit this file to version control',
+        '',
+      ];
+
+      for (const [key, value] of Object.entries(mergedEnv)) {
+        if (value) {
+          lines.push(`${key}=${value}`);
+        }
+      }
+
+      const encoder = new TextEncoder();
+      await indexedDBVault.saveFile('.env', encoder.encode(lines.join('\n')).buffer);
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to save .env to fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -575,7 +969,7 @@ export async function saveEnvToVault(env: VaultEnv): Promise<boolean> {
           const key = trimmed.slice(0, eqIndex).trim();
           const value = trimmed.slice(eqIndex + 1).trim();
           if (key && value) {
-            existingEnv[key] = value;
+            existingEnv[key as keyof VaultEnv] = value;
           }
         }
       }
@@ -611,6 +1005,40 @@ export async function saveEnvToVault(env: VaultEnv): Promise<boolean> {
 }
 
 export async function loadEnvFromVault(): Promise<VaultEnv> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const content = await indexedDBVault.readFile('.env');
+      if (content) {
+        const decoder = new TextDecoder();
+        const text = decoder.decode(content);
+
+        const env: VaultEnv = {};
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+
+          const eqIndex = trimmed.indexOf('=');
+          if (eqIndex > 0) {
+            const key = trimmed.slice(0, eqIndex).trim();
+            const value = trimmed.slice(eqIndex + 1).trim();
+            if (key && value) {
+              env[key as keyof VaultEnv] = value;
+            }
+          }
+        }
+
+        return env;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return {};
 
@@ -631,7 +1059,7 @@ export async function loadEnvFromVault(): Promise<VaultEnv> {
         const key = trimmed.slice(0, eqIndex).trim();
         const value = trimmed.slice(eqIndex + 1).trim();
         if (key && value) {
-          env[key] = value;
+          env[key as keyof VaultEnv] = value;
         }
       }
     }
@@ -643,6 +1071,17 @@ export async function loadEnvFromVault(): Promise<VaultEnv> {
 }
 
 export async function deleteEnvFromVault(): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      await indexedDBVault.deleteFile('.env');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -657,6 +1096,25 @@ export async function deleteEnvFromVault(): Promise<boolean> {
 export async function syncToVault(
   conversations: Conversation[]
 ): Promise<{ synced: number; failed: number }> {
+  // Handle fallback mode
+  if (currentVaultState.isFallbackMode) {
+    let synced = 0;
+    let failed = 0;
+
+    for (const conv of conversations) {
+      try {
+        const success = await saveConversationToVault(conv);
+        if (success) synced++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { synced, failed };
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return { synced: 0, failed: 0 };
 
@@ -677,7 +1135,8 @@ export async function syncToVault(
 }
 
 export function isVaultConnected(): boolean {
-  return vaultHandle !== null;
+  // Check both FSA handle and fallback mode
+  return vaultHandle !== null || (currentVaultState.isFallbackMode && currentVaultState.isConnected);
 }
 
 /* ── Tool Levels Storage ── */
@@ -685,6 +1144,20 @@ export function isVaultConnected(): boolean {
 const TOOL_LEVELS_FILE = 'tool-levels.json';
 
 export async function saveToolLevelsToVault(levels: Record<string, any>): Promise<boolean> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${DATA_FOLDER}/${TOOL_LEVELS_FILE}`;
+      const encoder = new TextEncoder();
+      await indexedDBVault.saveFile(fileName, encoder.encode(JSON.stringify(levels, null, 2)).buffer);
+      return true;
+    } catch (err) {
+      console.error('[Vault] Failed to save tool levels to fallback:', err);
+      return false;
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return false;
 
@@ -702,6 +1175,22 @@ export async function saveToolLevelsToVault(levels: Record<string, any>): Promis
 }
 
 export async function loadToolLevelsFromVault(): Promise<Record<string, any>> {
+  // Handle fallback mode (IndexedDB)
+  if (currentVaultState.isFallbackMode && indexedDBVault) {
+    try {
+      const fileName = `${DATA_FOLDER}/${TOOL_LEVELS_FILE}`;
+      const content = await indexedDBVault.readFile(fileName);
+      if (content) {
+        const decoder = new TextDecoder();
+        return JSON.parse(decoder.decode(content));
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  // Handle File System Access mode
   const handle = await restoreVaultHandle();
   if (!handle) return {};
 
@@ -718,6 +1207,10 @@ export async function loadToolLevelsFromVault(): Promise<Record<string, any>> {
 }
 
 export function getVaultName(): string | null {
+  // Return name for fallback mode or FSA mode
+  if (currentVaultState.isFallbackMode) {
+    return 'IndexedDB Storage (Fallback)';
+  }
   return vaultHandle?.name || null;
 }
 

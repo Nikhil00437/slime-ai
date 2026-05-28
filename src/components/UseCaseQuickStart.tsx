@@ -6,25 +6,25 @@
 
 import React from 'react';
 import { Zap, Code, BookOpen, Mic, GitBranch } from 'lucide-react';
-import type { Skill } from '../types';
+import type { Personality } from '../types';
 
 interface UseCaseQuickStart {
   id: string;
   name: string;
   description: string;
   icon: React.ReactNode;
-  skillIds: string[];
+  personalityIds: string[];
   recommendedModel?: string;
   prompt: string; // Initial prompt to send
 }
 
 interface UseCaseQuickStartProps {
   onStart: (config: {
-    skillId?: string;
+    personalityId?: string;
     modelId?: string;
     initialPrompt?: string;
   }) => void;
-  availableSkills: Skill[];
+  availablePersonalities: Personality[];
   availableModels: string[];
 }
 
@@ -34,7 +34,7 @@ const USE_CASES: UseCaseQuickStart[] = [
     name: 'Code Review',
     description: 'Review code for issues',
     icon: <Code size={16} />,
-    skillIds: ['code-expert'],
+    personalityIds: ['code-expert'],
     prompt: 'Please review the following code for bugs, security issues, and best practices:',
   },
   {
@@ -42,7 +42,7 @@ const USE_CASES: UseCaseQuickStart[] = [
     name: 'Write Story',
     description: 'Creative writing',
     icon: <BookOpen size={16} />,
-    skillIds: ['creative-writer'],
+    personalityIds: ['creative-writer'],
     prompt: 'Write a short story with compelling characters and plot.',
   },
   {
@@ -50,7 +50,7 @@ const USE_CASES: UseCaseQuickStart[] = [
     name: 'Analyze Data',
     description: 'Research and analysis',
     icon: <GitBranch size={16} />,
-    skillIds: ['research-analyst'],
+    personalityIds: ['research-analyst'],
     prompt: 'Analyze the following data and provide insights:',
   },
   {
@@ -58,7 +58,7 @@ const USE_CASES: UseCaseQuickStart[] = [
     name: 'Learn Topic',
     description: 'Explain and teach',
     icon: <Zap size={16} />,
-    skillIds: ['teacher'],
+    personalityIds: ['teacher'],
     prompt: 'Explain this topic in simple terms with examples:',
   },
   {
@@ -66,23 +66,23 @@ const USE_CASES: UseCaseQuickStart[] = [
     name: 'Start Debate',
     description: 'Argument analysis',
     icon: <Mic size={16} />,
-    skillIds: ['debate-partner'],
+    personalityIds: ['debate-partner'],
     prompt: 'Let\'s debate this topic. Present your best arguments:',
   },
 ];
 
 export const UseCaseQuickStartPanel: React.FC<UseCaseQuickStartProps> = ({
   onStart,
-  availableSkills,
+  availablePersonalities,
 }) => {
   const handleUseCaseClick = (useCase: UseCaseQuickStart) => {
-    // Find available skill from use case
-    const availableSkill = useCase.skillIds.find(skillId =>
-      availableSkills.some(s => s.id === skillId && s.enabled)
+    // Find available personality from use case
+    const availablePersonality = useCase.personalityIds.find(personalityId =>
+      availablePersonalities.some(p => p.id === personalityId && p.enabled)
     );
 
     onStart({
-      skillId: availableSkill,
+      personalityId: availablePersonality,
       initialPrompt: useCase.prompt,
     });
   };
@@ -90,27 +90,27 @@ export const UseCaseQuickStartPanel: React.FC<UseCaseQuickStartProps> = ({
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3">
       {USE_CASES.map(useCase => {
-        const hasSkills = useCase.skillIds.some(skillId =>
-          availableSkills.some(s => s.id === skillId && s.enabled)
+        const hasPersonalities = useCase.personalityIds.some(personalityId =>
+          availablePersonalities.some(p => p.id === personalityId && p.enabled)
         );
 
         return (
           <button
             key={useCase.id}
             onClick={() => handleUseCaseClick(useCase)}
-            disabled={!hasSkills}
+            disabled={!hasPersonalities}
             className={`
               flex flex-col items-center gap-1 p-3 rounded-lg border transition-all
-              ${hasSkills
+              ${hasPersonalities
                 ? 'bg-gray-800/50 border-gray-700 hover:bg-gray-700 hover:border-gray-600 cursor-pointer'
                 : 'bg-gray-800/20 border-gray-800 opacity-50 cursor-not-allowed'
               }
             `}
           >
-            <span className={`${hasSkills ? 'text-blue-400' : 'text-gray-500'}`}>
+            <span className={`${hasPersonalities ? 'text-blue-400' : 'text-gray-500'}`}>
               {useCase.icon}
             </span>
-            <span className={`text-xs font-medium ${hasSkills ? 'text-gray-200' : 'text-gray-500'}`}>
+            <span className={`text-xs font-medium ${hasPersonalities ? 'text-gray-200' : 'text-gray-500'}`}>
               {useCase.name}
             </span>
             <span className="text-xs text-gray-500 text-center">

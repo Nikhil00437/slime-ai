@@ -1,13 +1,11 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
-import { ModelInfo, DEFAULT_SKILLS, Skill, SidebarBlockType, AssistantSidebarContent, CodeBlock } from '../types';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { ModelInfo, SidebarBlockType, AssistantSidebarContent, CodeBlock, ChatMessage, ToolCall } from '../types';
 import { useAppContext } from '../store/AppContext';
+
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AttachmentInput, Attachment, getCapabilityFilters, filterModelsByCapabilities } from './AttachmentInput';
 import { calculateMessageCost, formatCost, formatTokenCount } from '../api/pricing';
-import { SkillQuickAccessBar, getPinnedSkillIds } from './SkillQuickAccessBar';
-import { SkillSuggestionBanner, getSuggestionReason } from './SkillSuggestionBanner';
 import { PersonalitySelector } from './PersonalitySelector';
-import { detectSkillFromQuery, getAttachmentTypeFromList, CONFIDENCE_THRESHOLD } from '../utils/skillDetection';
 import { AssistantSidebar } from './AssistantSidebar';
 import { SidebarManager } from './SidebarManager';
 import {
@@ -15,6 +13,7 @@ import {
   Square,
   Menu,
   ChevronDown,
+  ChevronRight,
   Cpu,
   Bot,
   Globe,
@@ -227,6 +226,303 @@ function fileToBase64(file: File, readerRef?: React.MutableRefObject<FileReader 
   });
 }
 
+interface ToolDisplay {
+  action: string;
+  category: string;
+  icon: string;
+}
+
+function findToolCall(toolCallId: string, allMessages: ChatMessage[]) {
+  for (const msg of allMessages) {
+    if (msg.toolCalls) {
+      const found = msg.toolCalls.find(tc => tc.id === toolCallId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function getToolCallDisplay(tc: ToolCall): ToolDisplay {
+  const name = tc.function.name;
+  let args: any = {};
+  try {
+    args = JSON.parse(tc.function.arguments || '{}');
+  } catch {
+    // Ignore parse error
+  }
+
+  if (name === 'bash' || name === 'pw_run') {
+    const cmd = args.CommandLine || '';
+    return {
+      action: cmd ? `Run command '${cmd.slice(0, 45)}${cmd.length > 45 ? '...' : ''}'` : 'Run command',
+      category: 'Script',
+      icon: 'terminal'
+    };
+  }
+
+  if (name === 'read_file' || name === 'view_file') {
+    const path = args.AbsolutePath || args.TargetFile || '';
+    const file = path.split(/[/\\]/).pop() || 'file';
+    return {
+      action: `Read the rest of ${file}`,
+      category: 'File System',
+      icon: 'file'
+    };
+  }
+
+  if (name === 'write_file' || name === 'edit_file') {
+    const path = args.AbsolutePath || args.TargetFile || '';
+    const file = path.split(/[/\\]/).pop() || 'file';
+    return {
+      action: `Write the full enhanced ${file}`,
+      category: 'File System',
+      icon: 'write'
+    };
+  }
+
+  if (name === 'web_search') {
+    const query = args.query || '';
+    return {
+      action: query ? `Search for '${query.slice(0, 45)}${query.length > 45 ? '...' : ''}'` : 'Web search',
+      category: 'Web',
+      icon: 'search'
+    };
+  }
+
+  if (name === 'web_fetch') {
+    const url = args.Url || '';
+    return {
+      action: url ? `Fetch ${url.slice(0, 45)}${url.length > 45 ? '...' : ''}` : 'Fetch web page',
+      category: 'Web',
+      icon: 'globe'
+    };
+  }
+
+  return {
+    action: `Execute ${name}`,
+    category: 'Tool',
+    icon: 'tool'
+  };
+}
+
+function summarizeToolMessages(toolMessages: ChatMessage[], allMessages: ChatMessage[]): string {
+  if (toolMessages.length === 1) {
+    const tc = findToolCall(toolMessages[0].toolCallId || '', allMessages);
+    if (tc) {
+      return getToolCallDisplay(tc).action;
+    }
+    return 'Executed tool';
+  }
+
+  let commandCount = 0;
+  let viewCount = 0;
+  let writeCount = 0;
+  let searchCount = 0;
+  let otherCount = 0;
+
+  for (const msg of toolMessages) {
+    const tc = findToolCall(msg.toolCallId || '', allMessages);
+    if (tc) {
+      const name = tc.function.name;
+      if (name === 'bash' || name === 'pw_run') {
+        commandCount++;
+      } else if (name === 'read_file' || name === 'view_file') {
+        viewCount++;
+      } else if (name === 'write_file' || name === 'edit_file') {
+        writeCount++;
+      } else if (name === 'web_search' || name === 'web_fetch') {
+        searchCount++;
+      } else {
+        otherCount++;
+      }
+    } else {
+      otherCount++;
+    }
+  }
+
+  const parts: string[] = [];
+  if (commandCount > 0) {
+    parts.push(`Ran ${commandCount} ${commandCount === 1 ? 'command' : 'commands'}`);
+  }
+  if (viewCount > 0) {
+    parts.push(`viewed ${viewCount === 1 ? 'a file' : `${viewCount} files`}`);
+  }
+  if (writeCount > 0) {
+    parts.push(`wrote ${writeCount === 1 ? 'a file' : `${writeCount} files`}`);
+  }
+  if (searchCount > 0) {
+    parts.push(`searched the web ${searchCount} ${searchCount === 1 ? 'time' : 'times'}`);
+  }
+  if (otherCount > 0) {
+    parts.push(`ran ${otherCount} other ${otherCount === 1 ? 'tool' : 'tools'}`);
+  }
+
+  if (parts.length === 0) return 'Executed tools';
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]}, ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+type ListItem = 
+  | { type: 'message'; message: ChatMessage }
+  | { type: 'grouped-tools'; id: string; toolMessages: ChatMessage[]; timestamp: number };
+
+function groupMessages(rawMessages: ChatMessage[]): ListItem[] {
+  const items: ListItem[] = [];
+  let currentGroup: ChatMessage[] = [];
+
+  for (const msg of rawMessages) {
+    if (msg.role === 'tool') {
+      currentGroup.push(msg);
+    } else {
+      if (currentGroup.length > 0) {
+        items.push({
+          type: 'grouped-tools',
+          id: `grouped-tools-${currentGroup[0].id}`,
+          toolMessages: [...currentGroup],
+          timestamp: currentGroup[0].timestamp,
+        });
+        currentGroup = [];
+      }
+      items.push({ type: 'message', message: msg });
+    }
+  }
+
+  if (currentGroup.length > 0) {
+    items.push({
+      type: 'grouped-tools',
+      id: `grouped-tools-${currentGroup[0].id}`,
+      toolMessages: [...currentGroup],
+      timestamp: currentGroup[0].timestamp,
+    });
+  }
+
+  return items;
+}
+
+const SingleToolRun: React.FC<{ toolMessage: ChatMessage; allMessages: ChatMessage[] }> = ({ toolMessage, allMessages }) => {
+  const [showOutput, setShowOutput] = useState(false);
+  const tc = React.useMemo(() => findToolCall(toolMessage.toolCallId || '', allMessages), [toolMessage.toolCallId, allMessages]);
+  
+  const display = React.useMemo(() => {
+    if (tc) return getToolCallDisplay(tc);
+    return {
+      action: `Execute tool ${toolMessage.toolCallId?.slice(0, 8) || ''}`,
+      category: 'Tool',
+      icon: 'tool'
+    };
+  }, [tc, toolMessage.toolCallId]);
+
+  const isSuccess = !toolMessage.error;
+
+  return (
+    <div className="flex flex-col pl-4 pr-2 py-3 border-l-2 border-dark-700/60 my-2 ml-3 animate-fade-in text-left">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-dark-400 font-mono text-sm select-none">&gt;_</span>
+        <span className="text-dark-100 font-medium text-sm">{display.action}</span>
+      </div>
+      
+      <div className="flex items-center gap-2 mb-2 pl-6">
+        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-dark-800 text-dark-400 border border-dark-700/50 uppercase tracking-wider">
+          {display.category}
+        </span>
+      </div>
+      
+      <div className="flex items-center gap-2 pl-6">
+        {isSuccess ? (
+          <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+            <span>Done</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-red-400 font-medium">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>Error</span>
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowOutput(!showOutput)}
+          className="text-[10px] text-dark-500 hover:text-dark-300 underline ml-2 cursor-pointer focus:outline-none"
+        >
+          {showOutput ? 'Hide Output' : 'View Output'}
+        </button>
+      </div>
+
+      {showOutput && (
+        <div className="mt-3 pl-6 w-full max-w-full">
+          <div className="text-[10px] text-dark-500 font-medium mb-1 uppercase tracking-wider">Output:</div>
+          <pre className="text-xs bg-dark-950/80 rounded-lg p-3 overflow-x-auto text-dark-300 font-mono border border-dark-800 max-h-60 overflow-y-auto whitespace-pre-wrap">
+            {toolMessage.content}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AgenticWorkflowBlock: React.FC<{ toolMessages: ChatMessage[]; allMessages: ChatMessage[] }> = ({ toolMessages, allMessages }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const summary = React.useMemo(() => summarizeToolMessages(toolMessages, allMessages), [toolMessages, allMessages]);
+
+  return (
+    <div className="w-full my-1.5">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between py-2 px-0 text-xs font-semibold text-dark-400 hover:text-dark-200 bg-transparent transition-all duration-200 text-left focus:outline-none cursor-pointer"
+      >
+        <span className="flex-1 truncate">{summary}</span>
+        <svg
+          className={`w-3.5 h-3.5 ml-2 transition-transform duration-200 shrink-0 text-dark-500 ${isExpanded ? 'rotate-90' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+
+      {isExpanded && (
+        <div className="mt-1 bg-transparent border-none py-1">
+          {toolMessages.map((msg) => (
+            <SingleToolRun key={msg.id} toolMessage={msg} allMessages={allMessages} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const getToolIcon = (toolName: string) => {
+  const name = toolName.toLowerCase();
+  if (name.includes('search')) return <Search size={12} className="text-cyan-400" />;
+  if (name.includes('scraper')) return <Bug size={12} className="text-violet-400" />;
+  if (name.includes('code') || name.includes('terminal')) return <Terminal size={12} className="text-purple-400" />;
+  return <Cpu size={12} className="text-slime-400" />;
+};
+
+const CopyLogButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="absolute top-2 right-2 p-1.5 bg-dark-900/80 hover:bg-dark-800 text-dark-400 hover:text-white rounded border border-dark-750/60 transition-colors shadow-sm z-20 focus:outline-none cursor-pointer flex items-center justify-center"
+      title="Copy log"
+    >
+      {copied ? <Check size={11} className="text-slime-400" /> : <Copy size={11} />}
+    </button>
+  );
+};
+
 interface ChatPanelProps {
   onOpenScraper?: () => void;
   rightSidebarOpen?: boolean;
@@ -257,6 +553,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     createConversation,
     settings,
     regenerateLastResponse,
+    regenerateResponse,
     editLastMessage,
     retryLastMessage,
     copyMessageToClipboard,
@@ -267,6 +564,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     deleteConversation,
     clearConversationMessages,
     togglePinConversation,
+    toggleMemoryEnabled,
     duplicateConversation,
     renameConversation,
     branchConversation,
@@ -281,6 +579,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setPendingWebSearch,
     setMessageSidebarActiveBlock,
   } = useAppContext();
+
+  // Use active conversation messages directly
+  const messages = activeConversation?.messages || [];
+  const isStreaming = isLoading;
+
+  // Group consecutive tool messages together
+  const listItems = useMemo(() => {
+    return groupMessages(messages);
+  }, [messages]);
+
+  // Scroll container ref for messages
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const [input, setInput] = useState('');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -300,10 +610,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [showTemperature, setShowTemperature] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
-  const [agentStepsCollapsed, setAgentStepsCollapsed] = useState(() => {
-    const stored = localStorage.getItem('mm_agent_steps_collapsed');
-    return stored ? JSON.parse(stored) : true;
-  });
   const [showLoopPanel, setShowLoopPanel] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
 
@@ -358,7 +664,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     }
 
     // Set active block to the specified type, or default to coding > processing > thinking
-    const activeBlock = blockType || finalContent.coding ? 'coding' : finalContent.processing ? 'processing' : finalContent.thinking ? 'thinking' : undefined;
+    const activeBlock = blockType || (finalContent.coding ? 'coding' : finalContent.processing ? 'processing' : finalContent.thinking ? 'thinking' : null);
 
     const contentWithActiveBlock = {
       ...finalContent,
@@ -402,23 +708,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // Check if using external sidebar
   const isUsingExternalSidebar = !!setExternalRightSidebarOpen;
 
-  // Skill Quick Access state
-  const [pinnedSkillIds] = useState<string[]>(() => getPinnedSkillIds());
-  const [activeSkillForBar, setActiveSkillForBar] = useState<string | null>(null);
-  const [suggestedSkill, setSuggestedSkill] = useState<Skill | null>(null);
-  const [suggestionConfidence, setSuggestionConfidence] = useState(0);
-  const [suggestionReason, setSuggestionReason] = useState('');
+
 
   // Personality state
   const [activePersonalityId, setActivePersonalityId] = useState<string | null>(null);
 
   // Input history navigation state within component (synced with context)
   const [inputHistoryLocalIndex, setInputHistoryLocalIndex] = useState<number>(-1);
-
-  // Persist agent steps collapse state
-  useEffect(() => {
-    localStorage.setItem('mm_agent_steps_collapsed', JSON.stringify(agentStepsCollapsed));
-  }, [agentStepsCollapsed]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -469,7 +765,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   // Auto-scroll detection - track if user is at bottom
   useEffect(() => {
-    const container = messagesContainerRef.current;
+    const container = scrollRef.current;
     if (!container) return;
     
     const handleScroll = () => {
@@ -495,31 +791,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   // Reset history navigation on new message send
 
-  // Skill auto-detection and suggestion when input changes
-  useEffect(() => {
-    if (!input.trim() || input.length < 3) {
-      if (suggestedSkill) {
-        setSuggestedSkill(null);
-      }
-      return;
-    }
 
-    const attachmentType = getAttachmentTypeFromList(attachments as unknown as Array<{ type: string }>);
-    const result = detectSkillFromQuery(input, DEFAULT_SKILLS as Skill[], attachmentType);
-
-    // If confidence is below auto-threshold but above suggestion threshold, show banner
-    if (result.confidence >= 0.5 && result.confidence < CONFIDENCE_THRESHOLD && result.skill) {
-      if (!suggestedSkill || suggestedSkill.id !== result.skill.id) {
-        setSuggestedSkill(result.skill);
-        setSuggestionConfidence(result.confidence);
-        setSuggestionReason(getSuggestionReason(result.matchedKeywords, result.matchedTriggers, attachmentType));
-      }
-    } else if (result.confidence >= CONFIDENCE_THRESHOLD) {
-      // Auto-activate - update the bar
-      setActiveSkillForBar(result.skill?.id || null);
-      setSuggestedSkill(null);
-    }
-  }, [input, attachments]);
 
   const handleSubmit = async () => {
     const trimmed = input.trim();
@@ -546,7 +818,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setShowAttachmentMenu(false);
     const currentAttachments = [...attachments];
     setAttachments([]);
-    await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined, convId);
+    await sendMessage(trimmed, currentAttachments, activePersonalityId || undefined, convId || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -902,43 +1174,43 @@ return (
           <button
             onClick={() => setShowSystemPrompt(!showSystemPrompt)}
             className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
-            title="View system prompt"
+            title="View custom system prompt"
           >
             <Sparkles size={14} />
           </button>
           {showSystemPrompt && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowSystemPrompt(false)} />
-              <div className="absolute top-full right-0 mt-1 p-3 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl z-50 max-w-64">
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles size={12} className="text-purple-400" />
-                  <span className="text-xs font-semibold text-dark-300">System Prompt</span>
+              <div className="absolute top-full right-0 mt-1.5 p-4 bg-dark-800/98 backdrop-blur-xl border border-dark-700/40 rounded-xl shadow-2xl z-50 w-80 dropdown-animate">
+                <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-dark-700/30">
+                  <Sparkles size={13} className="text-purple-400 fill-purple-400/20" />
+                  <span className="text-xs font-bold text-dark-200 uppercase tracking-wider">Custom System Prompt</span>
                 </div>
-                <p className="text-xs text-dark-400 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                  {settings.systemPrompt}
-                </p>
+                <div className="text-xs text-dark-400 whitespace-pre-wrap max-h-48 overflow-y-auto sidebar-scroll pr-1 leading-relaxed">
+                  {settings.systemPrompt || (
+                    <span className="text-dark-600 italic">No custom instructions set.</span>
+                  )}
+                </div>
               </div>
             </>
           )}
         </div>
-      </div>
 
-      {/* Toolbar with search and conversation actions */}
-      {activeConversation && activeConversation.messages.length > 0 && (
-        <div className="flex items-center justify-between px-4 py-2 bg-dark-800/30 border-b border-dark-700/30">
-          <div className="flex items-center gap-2">
+        {/* Unified Chat Controls */}
+        {activeConversation && activeConversation.messages.length > 0 && (
+          <div className="flex items-center gap-1.5 ml-auto border-l border-dark-700/30 pl-3">
             {/* Search */}
             <div className="relative">
               <button
                 onClick={() => setShowSearch(!showSearch)}
-                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
+                className={`p-1.5 rounded transition-colors ${showSearch ? 'text-slime-400 bg-slime-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
                 title="Search in conversation"
               >
                 <Search size={14} />
               </button>
               {showSearch && (
-                <div className="absolute top-full left-0 mt-1 z-50">
-                  <div className="flex items-center gap-1 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg px-2 py-1">
+                <div className="absolute top-full right-0 mt-1 z-50">
+                  <div className="flex items-center gap-1 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg px-2 py-1 shadow-lg">
                     <Search size={12} className="text-dark-500" />
                     <input
                       type="text"
@@ -957,21 +1229,21 @@ return (
                 </div>
               )}
             </div>
-            
+
             {/* Quick Prompts */}
             {settings.quickPrompts.length > 0 && (
               <div className="relative">
                 <button
                   onClick={() => setShowQuickPrompts(!showQuickPrompts)}
-                  className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
+                  className={`p-1.5 rounded transition-colors ${showQuickPrompts ? 'text-slime-400 bg-slime-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
                   title="Quick prompts"
                 >
                   <Library size={14} />
                 </button>
                 {showQuickPrompts && (
-                  <div className="absolute top-full left-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-48">
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-48">
                     <div className="p-2">
-                      <div className="text-xs text-dark-500 px-2 py-1">Quick Prompts</div>
+                      <div className="text-xs text-dark-500 px-2 py-1 border-b border-dark-700/30 mb-1">Quick Prompts</div>
                       {settings.quickPrompts.map(prompt => (
                         <button
                           key={prompt.id}
@@ -980,7 +1252,7 @@ return (
                             setShowQuickPrompts(false);
                             textareaRef.current?.focus();
                           }}
-                          className="w-full text-left px-2 py-1.5 text-sm text-dark-300 hover:bg-dark-700/40 rounded"
+                          className="w-full text-left px-2 py-1.5 text-xs text-dark-300 hover:bg-dark-700/40 rounded transition-colors"
                         >
                           {prompt.name}
                         </button>
@@ -990,21 +1262,7 @@ return (
                 )}
               </div>
             )}
-            
-            {/* Regenerate last response */}
-            {activeConversation.messages.length > 0 && (
-              <button
-                onClick={regenerateLastResponse}
-                disabled={isLoading}
-                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors disabled:opacity-50"
-                title="Regenerate last response"
-              >
-                <RotateCcw size={14} />
-              </button>
-            )}
-          </div>
-          
-          <div className="flex items-center gap-2">
+
             {/* Timestamp toggle */}
             <button
               onClick={() => setSettings(s => ({ ...s, showTimestamps: !s.showTimestamps }))}
@@ -1013,20 +1271,21 @@ return (
             >
               <Clock size={14} />
             </button>
-            
-            {/* Token count toggle */}
+
+            {/* Token cost toggle */}
             <button
               onClick={() => setSettings(s => ({ ...s, showCostEstimate: !s.showCostEstimate }))}
               className={`p-1.5 rounded transition-colors ${settings.showCostEstimate ? 'text-slime-400 bg-slime-400/10' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
               title={settings.showCostEstimate ? 'Hide cost/token info' : 'Show cost and token count'}
             >
-              <span className="text-xs font-mono">$</span>
+              <span className="text-xs font-mono font-bold">$</span>
             </button>
-            
-            {/* Memory toggle */}
+
             <button
               onClick={() => {
-                // Memory is per-conversation, toggled via conversation update
+                if (activeConversation) {
+                  toggleMemoryEnabled(activeConversation.id);
+                }
               }}
               className={`p-1.5 rounded transition-colors ${
                 activeConversation?.memoryEnabled 
@@ -1037,25 +1296,25 @@ return (
             >
               <Brain size={14} />
             </button>
-            
-            {/* Conversation menu */}
+
+            {/* Conversation menu dropdown */}
             <div className="relative">
               <button
                 onClick={() => setShowConvMenu(!showConvMenu)}
-                className="p-1.5 text-dark-500 hover:text-dark-200 hover:bg-dark-700/40 rounded transition-colors"
+                className={`p-1.5 rounded transition-colors ${showConvMenu ? 'text-dark-100 bg-dark-700/40' : 'text-dark-500 hover:text-dark-200 hover:bg-dark-700/40'}`}
               >
                 <MoreVertical size={14} />
               </button>
               {showConvMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowConvMenu(false)} />
-                  <div className="absolute top-full right-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-40">
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-dark-800/95 backdrop-blur-xl border border-dark-700/30 rounded-lg shadow-xl min-w-40 py-1">
                     <button
                       onClick={() => {
                         duplicateConversation(activeConversation.id);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40 rounded-t-lg"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-dark-300 hover:bg-dark-700/40"
                     >
                       <CopyIcon size={14} /> Duplicate
                     </button>
@@ -1101,7 +1360,7 @@ return (
                         clearConversationMessages(activeConversation.id);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-yellow-400 hover:bg-yellow-900/20"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/20 border-t border-dark-700/30"
                     >
                       <Trash2 size={14} /> Clear Messages
                     </button>
@@ -1110,7 +1369,7 @@ return (
                         deleteConversation(activeConversation.id);
                         setShowConvMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/20 rounded-b-lg"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/20 rounded-b-lg border-t border-dark-700/30"
                     >
                       <Trash2 size={14} /> Delete
                     </button>
@@ -1119,11 +1378,11 @@ return (
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 relative scroll-smooth">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 relative scroll-smooth">
         {/* Active Top Status */}
         {isExecutingTool && activeTools.length > 0 && (
           <div className="sticky top-4 z-10 p-2 inset-x-0 flex justify-center pointer-events-none">
@@ -1134,15 +1393,16 @@ return (
           </div>
         )}
         {!activeConversation || activeConversation.messages.length === 0 ? (
-          /* Empty State */
+          /* Empty State - Qwen-inspired centered greeting */
           <div className="flex flex-col items-center justify-center h-full px-4 text-center">
-            <div className="mb-6 p-4 rounded-2xl bg-gradient-to-br from-slime-500/10 to-cyan-500/10 border border-dark-700/30">
-              <Sparkles size={48} className="text-slime-400" />
+            <div className="mb-6 p-3 rounded-2xl">
+              <Sparkles size={36} className="text-slime-400/80" />
             </div>
-            <h1 className="text-2xl font-bold gradient-text mb-2">Slime AI</h1>
-            <p className="text-dark-400 max-w-md mb-8">
-              Chat with AI models from Ollama, LM Studio, and OpenRouter. Select a model from the
-              sidebar to get started.
+            <h1 className="text-3xl font-semibold text-dark-100 mb-2 tracking-tight">
+              How can I help you today?
+            </h1>
+            <p className="text-dark-400 max-w-md mb-10 text-sm">
+              Select a model below or start typing to chat
             </p>
 
             {allModels.length > 0 && (
@@ -1238,363 +1498,421 @@ return (
               </div>
             )}
 
-            {activeConversation.messages.map((message, index) => {
-              const isHighlighted = searchInput && message.content.toLowerCase().includes(searchInput.toLowerCase());
-              const isLastUserMessage = message.role === 'user' && 
-                index === activeConversation.messages.slice().reverse().findIndex(m => m.role === 'user');
-              
-              return (
-                <div
-                  key={message.id}
-                  className={`flex gap-4 px-4 py-4 group relative animate-msg-appear rounded-2xl ${
-                    message.role === 'user' ? 'msg-user' : message.role === 'tool' ? 'bg-dark-800/40 border border-dark-700/40' : 'msg-assistant'
-                  } ${
-                    index > 0 && activeConversation.messages[index - 1].role === message.role
-                      ? 'py-1'
-                      : ''
-                  } ${isHighlighted ? 'bg-yellow-900/20' : ''}`}
-                >
-                  {/* Avatar */}
-                  <div className="shrink-0 mt-0.5">
-                    {message.role === 'user' ? (
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slime-500 to-teal-500 flex items-center justify-center">
-                        <User size={16} className="text-dark-900" />
-                      </div>
-                    ) : message.role === 'tool' ? (
-                      <div className="w-8 h-8 rounded-full bg-dark-800 border border-dark-700/50 flex items-center justify-center">
-                        <Bot size={16} className="text-dark-400" />
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slime-400 to-teal-500 flex items-center justify-center">
-                        <Sparkles size={16} className="text-dark-900" />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Message Content */}
-                  <div className="flex-1 min-w-0">
-                    {message.role === 'tool' ? (
-                      <details className="w-full bg-dark-900/40 border border-dark-700/50 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
-                        <summary className="px-4 py-2 text-xs text-dark-400 select-none group-hover:text-dark-300 focus:outline-none">
-                          Observed Tool Output (ID: {message.toolCallId?.slice(0, 8) || 'N/A'})
-                        </summary>
-                        <div className="px-4 py-3 border-t border-dark-700/40 text-xs text-dark-500 font-mono whitespace-pre-wrap mt-0 bg-dark-900/60 max-h-96 overflow-y-auto">
-                          {message.content}
-                        </div>
-                      </details>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="text-sm font-semibold text-white">
-                            {message.role === 'user' ? 'You' : 'Assistant'}
-                          </span>
-                          {message.role === 'assistant' && (
-                            <span className="text-xs text-dark-500 font-mono">
-                              {message.model.length > 30
-                                ? message.model.slice(0, 30) + '...'
-                                : message.model}
-                            </span>
-                          )}
-                          {settings.showTimestamps && (
-                            <span className="text-xs text-dark-600">
-                              {new Date(message.timestamp).toLocaleTimeString()}
-                            </span>
-                          )}
-                          {message.responseTime && message.role === 'assistant' && (
-                            <span className="text-xs text-dark-600">
-                              ({Math.round(message.responseTime / 1000)}s)
-                            </span>
-                          )}
-                          {/* Token count and cost */}
-                          {message.usage && message.role === 'assistant' && settings.showCostEstimate && (
-                            <span className="text-xs text-dark-600">
-                              {formatTokenCount(message.usage.totalTokens)} tokens • {formatCost(calculateMessageCost(message.provider, message.model, message.usage))}
-                            </span>
-                          )}
-                          {message.isStreaming && (
-                            <span className="flex items-center gap-1 text-xs text-slime-400">
-                              <span className="w-1.5 h-1.5 bg-slime-400 rounded-full animate-pulse streaming-glow" />
-                              typing...
-                            </span>
-                          )}
-                          {/* Thinking indicator - shown when assistant has thinking content */}
-                          {message.assistantSidebar?.thinking && !message.isStreaming && (
-                            <button
-                              onClick={() => {
-                                if (openSidebarMessageId !== message.id) {
-                                  openRightSidebar(message.id, message.assistantSidebar!, 'thinking');
-                                }
-                              }}
-                              className={`flex items-center gap-1 text-xs transition-colors ${
-                                openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'thinking'
-                                  ? 'text-green-400'
-                                  : 'text-green-500 hover:text-green-400'
-                              }`}
-                            >
-                              <Brain size={12} />
-                              <span>Thinking</span>
-                              {message.assistantSidebar.thinking.isStreaming && (
-                                <Loader2 size={10} className="animate-spin" />
-                              )}
-                            </button>
-                          )}
-                          {/* Processing indicator - shown when assistant is running tools */}
-                          {message.assistantSidebar?.processing && (
-                            <button
-                              onClick={() => {
-                                if (openSidebarMessageId !== message.id) {
-                                  openRightSidebar(message.id, message.assistantSidebar!, 'processing');
-                                }
-                              }}
-                              className={`flex items-center gap-1 text-xs transition-colors ${
-                                openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'processing'
-                                  ? 'text-cyan-400'
-                                  : 'text-cyan-500 hover:text-cyan-400'
-                              }`}
-                            >
-                              <Cpu size={12} />
-                              <span>Processing</span>
-                              {message.assistantSidebar.processing.isStreaming && (
-                                <Loader2 size={10} className="animate-spin" />
-                              )}
-                            </button>
-                          )}
-                          {/* Coding indicator - shown when assistant has code blocks */}
-                          {(message.assistantSidebar?.coding || message.content.includes('```')) && (
-                            <button
-                              onClick={() => {
-                                if (openSidebarMessageId !== message.id) {
-                                  // Create sidebar content if it doesn't exist
-                                  const sidebarContent = message.assistantSidebar || {
-                                    activeBlock: 'coding' as SidebarBlockType,
-                                    coding: {
-                                      blocks: [],
-                                      isStreaming: false,
-                                      currentBlockId: '',
-                                      timestamp: Date.now(),
-                                    },
-                                  };
-                                  openRightSidebar(message.id, sidebarContent, 'coding', message.content);
-                                }
-                              }}
-                              className={`flex items-center gap-1 text-xs transition-colors ${
-                                openSidebarMessageId === message.id && message.assistantSidebar?.activeBlock === 'coding'
-                                  ? 'text-purple-400'
-                                  : 'text-purple-500 hover:text-purple-400'
-                              }`}
-                            >
-                              <Terminal size={12} />
-                              <span>Code</span>
-                              {message.assistantSidebar?.coding?.isStreaming && (
-                                <Loader2 size={10} className="animate-spin" />
-                              )}
-                            </button>
-                          )}
-                          {message.error && (
-                            <span className="flex items-center gap-1 text-xs text-red-400">
-                              <AlertTriangle size={12} />
-                              Error
-                              <button
-                                onClick={retryLastMessage}
-                                className="ml-1 text-slime-400 hover:text-slime-300"
-                                title="Retry"
-                              >
-                                <RotateCcw size={12} />
-                              </button>
-                            </span>
-                          )}
- 
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
-                            {/* Assistant Sidebar Toggle */}
-                            {message.role === 'assistant' && message.assistantSidebar && message.assistantSidebar.activeBlock && (
-                              <button
-                                onClick={() => openSidebarMessageId === message.id ? closeRightSidebar() : openRightSidebar(message.id, message.assistantSidebar!, message.assistantSidebar.activeBlock)}
-                                className={`p-1 transition-colors focus-ring-a11y ${
-                                  openSidebarMessageId === message.id
-                                    ? 'text-slime-400'
-                                    : 'text-dark-500 hover:text-dark-100'
-                                }`}
-                                title="Toggle assistant details"
-                              >
-                                <Sparkles size={12} />
-                              </button>
-                            )}
-                            {message.role === 'assistant' && (
-                              <button
-                                onClick={() => copyMessageToClipboard(message.content)}
-                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors copy-button focus-ring-a11y"
-                                title="Copy response"
-                              >
-                                {_copiedMessageId === message.id ? (
-                                  <Check size={12} className="copy-check copy-pulse" />
-                                ) : (
-                                  <Copy size={12} className="copy-icon" />
-                                )}
-                              </button>
-                            )}
-                            {message.role === 'user' && isLastUserMessage && (
-                              <button
-                                onClick={() => {
-                                  setEditingMessageId(message.id);
-                                  setEditContent(message.content);
-                                }}
-                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
-                                title="Edit and resend"
-                              >
-                                <Edit3 size={12} />
-                              </button>
-                            )}
-                            {message.role === 'user' && (
-                              <button
-                                onClick={() => branchConversation(message.id)}
-                                className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
-                                title="Continue from here as new chat"
-                              >
-                                <GitBranch size={12} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
- 
-                        {editingMessageId === message.id ? (
-                          <div className="mt-2">
-                            <textarea
-                              value={editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              className="w-full bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-dark-100 text-sm resize-none focus:outline-none focus:border-slime-500/40"
-                              rows={3}
-                              autoFocus
+            {listItems.map((listItem, index) => {
+                    if (listItem.type === 'grouped-tools') {
+                      return (
+                        <div
+                          key={listItem.id}
+                          className="flex gap-4 px-4 py-1.5 group relative animate-msg-appear rounded-2xl"
+                        >
+                          <div className="shrink-0 w-8" />
+                          <div className="flex-1 min-w-0">
+                            <AgenticWorkflowBlock
+                              toolMessages={listItem.toolMessages}
+                              allMessages={messages}
                             />
-                            <div className="flex gap-2 mt-2">
-                              <button
-                                onClick={async () => {
-                                  await editLastMessage(editContent);
-                                  setEditingMessageId(null);
-                                }}
-                                className="px-3 py-1 btn-send text-dark-900 text-xs rounded-lg font-medium"
-                              >
-                                Resend
-                              </button>
-                              <button
-                                onClick={() => setEditingMessageId(null)}
-                                className="px-3 py-1 bg-dark-700 hover:bg-dark-600 text-dark-100 text-xs rounded-lg"
-                              >
-                                Cancel
-                              </button>
-                            </div>
                           </div>
-                        ) : (
-                          <div className="text-dark-200">
-                            {message.role === 'user' ? (
-                              <div className="space-y-2">
-                                {message.attachments && message.attachments.length > 0 && (
-                                  <div className="flex flex-wrap gap-2">
-                                    {message.attachments.map((att, idx) => (
-                                      att.type === 'image' ? (
-                                        <img
-                                          key={idx}
-                                          src={att.url}
-                                          alt={att.name}
-                                          className="max-w-xs max-h-48 rounded-lg border border-dark-700/50"
-                                        />
-                                      ) : (
-                                        <div key={idx} className="flex items-center gap-2 bg-dark-800/70 px-3 py-2 rounded-lg border border-dark-700/40">
-                                          <FileText size={16} className="text-dark-400" />
-                                          <span className="text-sm text-dark-300">{att.name}</span>
-                                        </div>
-                                      )
-                                    ))}
+                        </div>
+                      );
+                    }
+
+                    const message = listItem.message;
+                    const isHighlighted = searchInput && message.content.toLowerCase().includes(searchInput.toLowerCase());
+                    const prevItem = index > 0 ? listItems[index - 1] : null;
+                    const prevMessage = prevItem?.type === 'message' ? prevItem.message : null;
+                    const isConsecutive = prevMessage && prevMessage.role === message.role;
+                    
+                    let isSameTurn = false;
+                    if (message.role === 'assistant') {
+                      for (let i = index - 1; i >= 0; i--) {
+                        const prevItem = listItems[i];
+                        if (prevItem.type === 'message') {
+                          if (prevItem.message.role === 'user') {
+                            break;
+                          }
+                          if (prevItem.message.role === 'assistant') {
+                            isSameTurn = true;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    
+                    const lastUserMsgId = [...messages].reverse().find(m => m.role === 'user')?.id;
+                    const isLastUserMessage = message.role === 'user' && message.id === lastUserMsgId;
+                    const isUser = message.role === 'user';
+                    const isTool = message.role === 'tool';
+                    
+                    const displayContent = !isUser && message.assistantSidebar
+                      ? getFilteredContent(message.content, message.assistantSidebar)
+                      : message.content;
+                      
+                    const hasContent = displayContent.trim() !== '';
+                    const hasAttachments = isUser && message.attachments && message.attachments.length > 0;
+                    const hasCodeBlocks = !isUser && message.assistantSidebar?.coding?.blocks && message.assistantSidebar.coding.blocks.length > 0;
+                    const isEditing = editingMessageId === message.id;
+
+                    const shouldRenderBubble = hasContent || hasAttachments || hasCodeBlocks || isEditing;
+
+                    return (
+                      <div
+                        key={message.id}
+                        className={`flex w-full ${
+                          isUser ? 'justify-end' : 'justify-start'
+                        } px-4 py-2 group relative animate-msg-appear ${
+                          isConsecutive ? 'py-0.5' : 'py-3'
+                        }`}
+                      >
+                        {/* Wrapper for side alignment and avatar spacing */}
+                        <div className={`flex gap-3 items-start max-w-[85%] sm:max-w-[80%] ${
+                          isUser ? 'flex-row-reverse' : 'flex-row'
+                        }`}>
+                          
+                          {/* Avatar - Only shown for assistant and tool, and only if not consecutive/same-turn */}
+                          {!isUser && (
+                            <div className="shrink-0 mt-0.5">
+                              {(isConsecutive || isSameTurn) ? (
+                                <div className="w-8" />
+                              ) : isTool ? (
+                                <div className="w-8 h-8 rounded-full bg-dark-800 border border-dark-700/50 flex items-center justify-center">
+                                  <Bot size={16} className="text-dark-400" />
+                                </div>
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slime-400 to-teal-500 flex items-center justify-center">
+                                  <Sparkles size={16} className="text-dark-900" />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Message Content Container */}
+                          <div className={`flex-1 min-w-0 flex flex-col ${
+                            isUser ? 'items-end' : 'items-start'
+                          }`}>
+                            
+                            {/* Metadata / Header Row (No "You" or "Assistant" text) */}
+                            {!isTool && !isSameTurn && (
+                              <div className="flex items-center gap-2 mb-1.5 flex-wrap px-1">
+                                {!isUser && (
+                                  <span className="text-sm font-semibold text-white">
+                                    {message.model ? (message.model.length > 30 ? message.model.slice(0, 30) + '...' : message.model) : 'Assistant'}
+                                  </span>
+                                )}
+                                
+                                {settings.showTimestamps && (
+                                  <span className="text-xs text-dark-500">
+                                    {new Date(message.timestamp).toLocaleTimeString()}
+                                  </span>
+                                )}
+                                
+                                {!isUser && message.responseTime && (
+                                  <span className="text-xs text-dark-600">
+                                    ({Math.round(message.responseTime / 1000)}s)
+                                  </span>
+                                )}
+                                
+                                {!isUser && message.usage && settings.showCostEstimate && (
+                                  <span className="text-xs text-dark-600">
+                                    {formatTokenCount(message.usage.totalTokens)} tokens • {formatCost(calculateMessageCost(message.provider, message.model, message.usage))}
+                                  </span>
+                                )}
+                                
+                                {!isUser && message.isStreaming && (
+                                  <span className="flex items-center gap-1 text-xs text-slime-400">
+                                    <span className="w-1.5 h-1.5 bg-slime-400 rounded-full animate-pulse streaming-glow" />
+                                    typing...
+                                  </span>
+                                )}
+                                
+                                {/* Indicators (Thinking, Processing, Coding, Error) */}
+                                {!isUser && message.assistantSidebar?.thinking && !message.isStreaming && (
+                                  <button
+                                    onClick={() => {
+                                      if (openSidebarMessageId !== message.id) {
+                                        openRightSidebar(message.id, message.assistantSidebar!, 'thinking');
+                                      }
+                                    }}
+                                    className={`flex items-center gap-1 text-xs transition-colors ${
+                                      openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'thinking'
+                                        ? 'text-green-400'
+                                        : 'text-green-500 hover:text-green-400'
+                                    }`}
+                                  >
+                                    <Brain size={12} />
+                                    <span>Thinking</span>
+                                    {message.assistantSidebar.thinking.isStreaming && (
+                                      <Loader2 size={10} className="animate-spin" />
+                                    )}
+                                  </button>
+                                )}
+
+                                {!isUser && message.assistantSidebar?.processing && (
+                                  <button
+                                    onClick={() => {
+                                      if (openSidebarMessageId !== message.id) {
+                                        openRightSidebar(message.id, message.assistantSidebar!, 'processing');
+                                      }
+                                    }}
+                                    className={`flex items-center gap-1 text-xs transition-colors ${
+                                      openSidebarMessageId === message.id && message.assistantSidebar.activeBlock === 'processing'
+                                        ? 'text-cyan-400'
+                                        : 'text-cyan-500 hover:text-cyan-400'
+                                    }`}
+                                  >
+                                    <Cpu size={12} />
+                                    <span>Processing</span>
+                                    {message.assistantSidebar.processing.isStreaming && (
+                                      <Loader2 size={10} className="animate-spin" />
+                                    )}
+                                  </button>
+                                )}
+
+                                {!isUser && (message.assistantSidebar?.coding || message.content.includes('```')) && (
+                                  <button
+                                    onClick={() => {
+                                      if (openSidebarMessageId !== message.id) {
+                                        const sidebarContent = message.assistantSidebar || {
+                                          activeBlock: 'coding' as SidebarBlockType,
+                                          coding: {
+                                            blocks: [],
+                                            isStreaming: false,
+                                            currentBlockId: '',
+                                            timestamp: Date.now(),
+                                          },
+                                        };
+                                        openRightSidebar(message.id, sidebarContent, 'coding', message.content);
+                                      }
+                                    }}
+                                    className={`flex items-center gap-1 text-xs transition-colors ${
+                                      openSidebarMessageId === message.id && message.assistantSidebar?.activeBlock === 'coding'
+                                        ? 'text-purple-400'
+                                        : 'text-purple-500 hover:text-purple-400'
+                                    }`}
+                                  >
+                                    <Terminal size={12} />
+                                    <span>Code</span>
+                                    {message.assistantSidebar?.coding?.isStreaming && (
+                                      <Loader2 size={10} className="animate-spin" />
+                                    )}
+                                  </button>
+                                )}
+
+                                {!isUser && message.error && (
+                                  <span className="flex items-center gap-1 text-xs text-red-400">
+                                    <AlertTriangle size={12} />
+                                    Error
+                                    <button
+                                      onClick={retryLastMessage}
+                                      className="ml-1 text-slime-400 hover:text-slime-300"
+                                      title="Retry"
+                                    >
+                                      <RotateCcw size={12} />
+                                    </button>
+                                  </span>
+                                )}
+
+                                {/* Message actions (hover) */}
+                                {isUser && (
+                                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                                    {isLastUserMessage && (
+                                      <button
+                                        onClick={() => {
+                                          setEditingMessageId(message.id);
+                                          setEditContent(message.content);
+                                        }}
+                                        className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
+                                        title="Edit and resend"
+                                      >
+                                        <Edit3 size={12} />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => branchConversation(message.id)}
+                                      className="p-1 text-dark-500 hover:text-dark-100 transition-colors"
+                                      title="Continue from here as new chat"
+                                    >
+                                      <GitBranch size={12} />
+                                    </button>
                                   </div>
                                 )}
-                                <div className="whitespace-pre-wrap text-dark-100">
-                                  {message.role === 'assistant' && message.assistantSidebar
-                                    ? getFilteredContent(message.content, message.assistantSidebar)
-                                    : message.content}
-                                </div>
                               </div>
-                            ) : (
-                              <MarkdownRenderer content={
-                                message.role === 'assistant' && message.assistantSidebar
-                                  ? getFilteredContent(message.content, message.assistantSidebar)
-                                  : message.content
-                              } />
                             )}
-                            
-                            {/* Clickable Code Block Trigger - replaces code blocks in chat */}
-                            {message.role === 'assistant' && message.assistantSidebar?.coding?.blocks && message.assistantSidebar.coding.blocks.length > 0 && (
-                              <CodeBlockTrigger
-                                blocks={message.assistantSidebar.coding.blocks}
-                                onClick={() => {
-                                  if (openSidebarMessageId !== message.id) {
-                                    openRightSidebar(message.id, message.assistantSidebar!, 'coding', message.content);
-                                  }
-                                }}
-                              />
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
 
-                  {/* Enhanced Sidebar - shown for assistant messages with sidebar content (only when not using external sidebar) */}
-                  {!isUsingExternalSidebar && message.role === 'assistant' && message.assistantSidebar && openSidebarMessageId === message.id && (
-                    <SidebarManager
-                      content={message.assistantSidebar}
-                      onClose={() => closeRightSidebar()}
-                      isStreaming={message.isStreaming}
-                      compact={false}
-                      onBlockChange={(block) => {
-                        // Use context method to update active block
-                        setMessageSidebarActiveBlock?.(message.id, block);
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        
-        {/* Collapsible Agent Steps Section */}
-        {activeConversation?.agentSteps && activeConversation.agentSteps.length > 0 && (
-          <div className="px-4 py-2 border-t border-dark-700/30">
-            <button
-              onClick={() => setAgentStepsCollapsed(!agentStepsCollapsed)}
-              className="flex items-center gap-2 text-xs text-dark-400 hover:text-dark-300"
-            >
-              {agentStepsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-              <span>Agent Steps ({activeConversation.agentSteps.length})</span>
-            </button>
-            {!agentStepsCollapsed && (
-              <div className="mt-2 space-y-2">
-                {activeConversation.agentSteps.map((step, idx) => (
-                  <div key={idx} className="bg-dark-900/40 border border-dark-700/40 rounded-lg p-3">
-                    <div className="text-xs font-semibold text-slime-400 mb-2">
-                      Step {step.stepNumber}
-                    </div>
-                    <div className="text-xs text-dark-400 mb-1">
-                      Tools: {step.toolCalls.map(tc => tc.function.name).join(', ')}
-                    </div>
-                    {step.toolResults.length > 0 && (
-                      <details className="mt-2">
-                        <summary className="text-xs text-dark-500 cursor-pointer hover:text-dark-400">
-                          Results ({step.toolResults.length})
-                        </summary>
-                        <div className="mt-2 space-y-1">
-                          {step.toolResults.map((result, rIdx) => (
-                            <div key={rIdx} className="text-xs text-dark-600 font-mono bg-dark-900/60 p-2 rounded max-h-24 overflow-y-auto">
-                              {result.content.slice(0, 200)}
-                              {result.content.length > 200 && '...'}
-                            </div>
-                          ))}
+                            {/* Actual Message Bubble */}
+                            {isTool ? (
+                              <details className="w-full bg-dark-900/40 border border-dark-700/50 rounded-lg overflow-hidden backdrop-blur-sm cursor-pointer group">
+                                <summary className="px-4 py-2 text-xs text-dark-400 select-none group-hover:text-dark-300 focus:outline-none">
+                                  Observed Tool Output (ID: {message.toolCallId?.slice(0, 8) || 'N/A'})
+                                </summary>
+                                <div className="px-4 py-3 border-t border-dark-700/40 text-xs text-dark-500 font-mono whitespace-pre-wrap mt-0 bg-dark-900/60 max-h-96 overflow-y-auto">
+                                  {message.content}
+                                </div>
+                              </details>
+                            ) : shouldRenderBubble ? (
+                              <div className={isUser
+                                ? `w-fit text-left px-5 py-3.5 rounded-2xl shadow-md msg-user rounded-tr-none border border-slime-500/20 ${isHighlighted ? 'bg-yellow-900/20' : ''}`
+                                : `w-full text-left text-dark-100 py-1 ${isHighlighted ? 'bg-yellow-900/20' : ''}`
+                              }>
+                                
+                                {editingMessageId === message.id ? (
+                                  <div className="mt-1 min-w-[280px] sm:min-w-[400px]">
+                                    <textarea
+                                      value={editContent}
+                                      onChange={(e) => setEditContent(e.target.value)}
+                                      className="w-full bg-dark-800 border border-dark-700/50 rounded-lg px-3 py-2 text-dark-100 text-sm resize-none focus:outline-none focus:border-slime-500/40"
+                                      rows={3}
+                                      autoFocus
+                                    />
+                                    <div className="flex gap-2 mt-2">
+                                      <button
+                                        onClick={async () => {
+                                          await editLastMessage(editContent);
+                                          setEditingMessageId(null);
+                                        }}
+                                        className="px-3 py-1 btn-send text-dark-900 text-xs rounded-lg font-medium"
+                                      >
+                                        Resend
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingMessageId(null)}
+                                        className="px-3 py-1 bg-dark-700 hover:bg-dark-600 text-dark-100 text-xs rounded-lg"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-dark-200">
+                                    {isUser ? (
+                                      <div className="space-y-2">
+                                        {message.attachments && message.attachments.length > 0 && (
+                                          <div className="flex flex-wrap gap-2 mb-2">
+                                            {message.attachments.map((att, idx) => (
+                                              att.type === 'image' ? (
+                                                <img
+                                                  key={idx}
+                                                  src={att.url}
+                                                  alt={att.name}
+                                                  className="max-w-xs max-h-48 rounded-lg border border-dark-700/50"
+                                                />
+                                              ) : (
+                                                <div key={idx} className="flex items-center gap-2 bg-dark-800/70 px-3 py-2 rounded-lg border border-dark-700/40">
+                                                  <FileText size={16} className="text-dark-400" />
+                                                  <span className="text-sm text-dark-300">{att.name}</span>
+                                                </div>
+                                              )
+                                            ))}
+                                          </div>
+                                        )}
+                                        <div className="whitespace-pre-wrap text-dark-100">
+                                          {message.content}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <MarkdownRenderer content={
+                                          message.assistantSidebar
+                                            ? getFilteredContent(message.content, message.assistantSidebar)
+                                            : message.content
+                                        } />
+                                        
+                                        {/* Assistant Response Actions Row */}
+                                        {!isUser && !message.isStreaming && (
+                                          <div className="flex items-center gap-3 mt-3 pt-2 border-t border-dark-700/20 text-xs text-dark-500">
+                                            {/* Copy Button */}
+                                            <button
+                                              onClick={() => copyMessageToClipboard(message.content)}
+                                              className="flex items-center gap-1 hover:text-dark-200 transition-colors btn-press animate-msg-appear"
+                                              title="Copy response"
+                                            >
+                                              {_copiedMessageId === message.id ? (
+                                                <>
+                                                  <Check size={12} className="copy-pulse text-slime-400" />
+                                                  <span className="text-slime-400">Copied</span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Copy size={12} />
+                                                  <span>Copy</span>
+                                                </>
+                                              )}
+                                            </button>
+                                            
+                                            {/* Regenerate Button */}
+                                            <button
+                                              onClick={() => regenerateResponse(message.id)}
+                                              disabled={isLoading}
+                                              className="flex items-center gap-1 hover:text-dark-200 transition-colors btn-press disabled:opacity-50 animate-msg-appear"
+                                              title="Regenerate this response"
+                                            >
+                                              <RotateCcw size={12} />
+                                              <span>Regenerate</span>
+                                            </button>
+
+                                            {/* Branch Button */}
+                                            <button
+                                              onClick={() => branchConversation(message.id)}
+                                              className="flex items-center gap-1 hover:text-dark-200 transition-colors btn-press animate-msg-appear"
+                                              title="Continue from here as new chat"
+                                            >
+                                              <GitBranch size={12} />
+                                              <span>Branch</span>
+                                            </button>
+
+                                            {/* Sidebar Details Toggle (if has activeBlock) */}
+                                            {message.assistantSidebar && message.assistantSidebar.activeBlock && (
+                                              <button
+                                                onClick={() => openSidebarMessageId === message.id ? closeRightSidebar() : openRightSidebar(message.id, message.assistantSidebar!, message.assistantSidebar.activeBlock || undefined)}
+                                                className={`flex items-center gap-1 transition-colors btn-press animate-msg-appear ${
+                                                  openSidebarMessageId === message.id ? 'text-slime-400' : 'hover:text-dark-200'
+                                                }`}
+                                                title="Toggle assistant details"
+                                              >
+                                                <Sparkles size={12} />
+                                                <span>Details</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+
+                                    {/* Clickable Code Block Trigger */}
+                                    {!isUser && message.assistantSidebar?.coding?.blocks && message.assistantSidebar.coding.blocks.length > 0 && (
+                                      <CodeBlockTrigger
+                                        blocks={message.assistantSidebar.coding.blocks}
+                                        onClick={() => {
+                                          if (openSidebarMessageId !== message.id) {
+                                            openRightSidebar(message.id, message.assistantSidebar!, 'coding', message.content);
+                                          }
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+
+                          </div>
                         </div>
-                      </details>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+
+                        {/* Enhanced Sidebar - shown for assistant messages with sidebar content (only when not using external sidebar) */}
+                        {!isUsingExternalSidebar && !isUser && message.assistantSidebar && openSidebarMessageId === message.id && (
+                          <SidebarManager
+                            content={message.assistantSidebar}
+                            onClose={() => closeRightSidebar()}
+                            isStreaming={message.isStreaming}
+                            compact={false}
+                            onBlockChange={(block) => {
+                              // Use context method to update active block
+                              setMessageSidebarActiveBlock?.(message.id, block);
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+            })}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
@@ -1610,18 +1928,6 @@ return (
             }}
           />
 
-          {/* Skill Quick Access Bar - removed, using Personality Selector instead */}
-          {/*}
-          <SkillQuickAccessBar
-            skills={DEFAULT_SKILLS as Skill[]}
-            activeSkillId={activeSkillForBar}
-            onSkillToggle={(skillId) => {
-              setActiveSkillForBar(skillId);
-              setSuggestedSkill(null);
-            }}
-            pinnedSkillIds={pinnedSkillIds}
-          />
-          */}
 
           {attachments.length > 0 && (
             <div className="mb-2 animate-fade-in-down">
