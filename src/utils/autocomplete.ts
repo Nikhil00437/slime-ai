@@ -1,7 +1,5 @@
-import { DEFAULT_SKILLS, Skill } from '../types';
-
 interface AutocompleteSuggestion {
-  type: 'skill' | 'keyword' | 'variable' | 'command';
+  type: 'keyword' | 'variable' | 'command';
   text: string;
   label: string;
   icon?: string;
@@ -16,7 +14,6 @@ const VARIABLE_PATTERNS = [
 ];
 
 const COMMAND_PATTERNS = [
-  { pattern: /^@/, label: 'Skill activation', needsSpace: true },
   { pattern: /^\//, label: 'Command', needsSpace: false },
   { pattern: /^\$/, label: 'Variable', needsSpace: false },
 ];
@@ -36,23 +33,7 @@ export function getAutocompleteSuggestions(
   const lastWord = beforeCursor.split(/\s+/).pop() || '';
   const lastWordLower = lastWord.toLowerCase();
 
-  // Skill suggestions (type @ to activate)
-  if (beforeCursor.endsWith('@') || lastWord.startsWith('@')) {
-    const skillQuery = lastWord.slice(1).toLowerCase();
-    const matchingSkills = DEFAULT_SKILLS.filter(
-      s => s.name.toLowerCase().includes(skillQuery) ||
-           s.id.toLowerCase().includes(skillQuery) ||
-           s.keywords?.some(k => k.toLowerCase().includes(skillQuery))
-    );
 
-    for (const skill of matchingSkills) {
-      suggestions.push({
-        type: 'skill',
-        text: `@${skill.id}`,
-        label: skill.name,
-      });
-    }
-  }
 
   // Command suggestions (type / to activate)
   if (beforeCursor.endsWith('/')) {
@@ -84,25 +65,10 @@ export function getAutocompleteSuggestions(
     }
   }
 
+
+
   // Keyword suggestions based on context
-  if (lastWord.length >= 2 && !beforeCursor.endsWith('@') && !beforeCursor.endsWith('/') && !beforeCursor.endsWith('$')) {
-    // Suggest skill keywords
-    for (const skill of DEFAULT_SKILLS) {
-      const matchingKeywords = skill.keywords?.filter(
-        k => k.toLowerCase().startsWith(lastWordLower) && k.toLowerCase() !== lastWordLower
-      );
-
-      if (matchingKeywords) {
-        for (const keyword of matchingKeywords) {
-          suggestions.push({
-            type: 'keyword',
-            text: keyword,
-            label: `Activate ${skill.name}`,
-          });
-        }
-      }
-    }
-
+  if (lastWord.length >= 2 && !beforeCursor.endsWith('/') && !beforeCursor.endsWith('$')) {
     // Suggest common patterns
     const commonPatterns = [
       { text: 'explain', label: 'Explain something' },
@@ -123,8 +89,8 @@ export function getAutocompleteSuggestions(
     }
   }
 
-  // Sort by relevance (skill > command > variable > keyword)
-  const typeOrder = { skill: 0, command: 1, variable: 2, keyword: 3 };
+  // Sort by relevance (command > variable > keyword)
+  const typeOrder = { command: 0, variable: 1, keyword: 2 };
   suggestions.sort((a, b) => typeOrder[a.type] - typeOrder[b.type]);
 
   return suggestions.slice(0, 8);
@@ -144,13 +110,7 @@ export function applySuggestion(
   // Find where to insert (after @, /, or $ for those types)
   let insertAt = cursorPosition;
 
-  if (suggestion.type === 'skill') {
-    // Find the @ symbol
-    const atIndex = beforeCursor.lastIndexOf('@');
-    if (atIndex !== -1) {
-      insertAt = atIndex;
-    }
-  } else if (suggestion.type === 'command') {
+  if (suggestion.type === 'command') {
     const slashIndex = beforeCursor.lastIndexOf('/');
     if (slashIndex !== -1) {
       insertAt = slashIndex;
@@ -172,7 +132,7 @@ export function applySuggestion(
  * Check if input ends with a trigger character
  */
 export function isAutocompleteTrigger(char: string): boolean {
-  return char === '@' || char === '/' || char === '$';
+  return char === '/' || char === '$';
 }
 
 /**

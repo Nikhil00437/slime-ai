@@ -1,3 +1,5 @@
+import React from 'react';
+
 /**
  * Draft auto-save with version history for recovering unsent messages
  */
@@ -6,7 +8,7 @@ const DRAFT_STORAGE_KEY = 'mm_drafts';
 const DRAFT_HISTORY_KEY = 'mm_draft_history';
 const MAX_HISTORY_ITEMS = 10;
 
-interface DraftEntry {
+export interface DraftEntry {
   conversationId: string;
   content: string;
   timestamp: number;

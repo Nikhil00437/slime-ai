@@ -51,9 +51,9 @@ function fixMultipleClassesOnLine(fixed: string): string {
   // Match patterns like "class A,B,C;" or "class A,B, C process;"
   const classMultiRegex = /class\s+([A-Za-z0-9_\-\s,]+)(?:\s+(\w+))?;/g;
 
-  return fixed.replace(classMultiRegex, (match, classes, style) => {
+  return fixed.replace(classMultiRegex, (match: string, classes: string, style: string) => {
     // Split by comma
-    const classList = classes.split(',').map(c => c.trim()).filter(c => c);
+    const classList = classes.split(',').map((c: string) => c.trim()).filter((c: string) => c);
 
     if (classList.length <= 1) {
       return match; // Only one class, no need to fix
